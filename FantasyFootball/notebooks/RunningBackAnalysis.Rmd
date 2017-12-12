@@ -1,0 +1,282 @@
+---
+title: "Running Back Analysis "
+output: html_notebook
+---
+
+```{R}
+library(knitr)
+library(devtools)
+library(dplyr)
+library(ggplot2)
+library(gridExtra)
+```
+
+
+Set the working directory to the subdirectory Fantasy Football Directory.
+```{R}
+#setwd("~/Desktop/FantasyFootball/notbooks")
+```
+
+Open the Running Back Data
+```{R}
+df_rb <- read.csv("../processed_data/player_data/RB/RB.csv")
+head(df_rb)
+```
+
+I'm not quite sure what the columns `Yds` and `Yds_x` are, and which one I should use. 
+As the yards rushed by a runninb back are surely correlated with his rushing yards, It will probably suffice to see which of these to variables correlates stronger with  `Fantasy.Points` to know which one to use. 
+
+```{R}
+g_cor1 <- df_rb %>% ggplot(aes(x = Yds, y = Fantasy.Points)) + geom_point() + geom_smooth() #see how 'Yds' Affects fantasy points. 
+g_cor2 <- df_rb %>% ggplot(aes(x = Yds_x, y = Fantasy.Points)) + geom_point() + geom_smooth() #see how 'Yds_x' affects fantasy points
+
+cor(df_rb %>% select(Yds, Yds_x, Fantasy.Points))
+grid.arrange(g_cor1, g_cor2, ncol = 2)
+```
+`Yds` is much more strongly correlated with `Fantasy.Points.` Fair to say these variables are what I want to use, not the ones with the `_x` suffix.
+
+Remove columns I wont use.
+```{R}
+df_rb <-  df_rb %>% select(-Yds_x, -TD_x)
+
+```
+
+
+Join Table with schedule table to get next week's oponent. 
+```{R}
+df_schedules <- read.csv("../processed_data/schedules.csv")
+
+df_rb <- df_rb %>%  #Add next week's opponent
+      left_join(
+            df_schedules %>%
+                  mutate(previous.week = Week - 1)  %>% #Store the previous week number
+                  select(team, year, previous.week, Opponent) %>% # keep only the columns I'll want to join in
+                  rename(Next.Opp = Opponent) %>% # rename the next week's opponent column
+                  group_by(team, year, previous.week) %>%
+                  summarise(Next.Opp = first(Next.Opp)),
+            by = c("Team" = "team", "year" = "year", "week" = "previous.week")
+      )
+
+```
+
+Store a series of shift statistics: 
+- Next week's fantasy points earned (this will be the response variable in the analysis to follow)
+- Previous week's attempts
+- Previous week's yards
+- Previous week's yards/attempt
+- Previous week's TDs
+- Previous week's Fumbles
+- Previous week's Receptions
+
+```{R}
+df_rb <- df_rb %>%
+      group_by(Player, year) %>% # group by player and year to ensure stats stay within the current season
+      mutate(
+            Next.Fantasy.Points = lead(n = 1, Fantasy.Points), #Add the next week's points
+            Previous.Att = lag(n = 1, Att), #Add previous week's attempts
+            Previous.Yds = lag(n = 1, Yds), #Add previous week's Yards
+            Previous.Yds.Att = lag(n = 1, Yds.Att), #Add previous week's Yds/Attempt
+            Previous.TD = lag(n = 1, TD), # Previous week's Touchdowns
+            Previous.Fum = lag(n = 1, Fum), #Get the previous week's fumbles
+            Prevoius.Rec = lag(n = 1, Rec) # Previous week's receptions
+            ) %>% 
+            ungroup() %>%
+      arrange(Player,year,week) # Sort table to see effect of windowing
+```
+
+#### Let's do some basic feature extraction
+
+First, I'll add the average fanatasy points, attempts, yards, Yards/Attempt, TDs and fumbles from previous year
+```{R}
+# Add the average fantasy points in that season.
+df_rb <- df_rb %>%
+      group_by(Player, year) %>%
+      mutate(Avg.Fantasy.Points = mean(Fantasy.Points), # average fantasy points for that year
+             Avg.Att = mean(Att), # Average targets for that year
+             Avg.Yds = mean(Yds), # Average yards for that year
+             Avg.Yds.Att = mean(Yds.Att), #Average yards/attempt for that year
+             Avg.TD = mean(TD), #Average TD's per game for that year
+             Avg.Fum = mean(Fum), #Average number of fumbles per game for that year
+             Avg.Rec = mean(Rec) #Average number of receptions per game for that year
+      )  
+
+# Add columns for these averages from the previous season.
+df_rb <-  df_rb %>%
+      left_join(
+            df_rb %>% 
+                  mutate(next.year = year +1) %>% # Add column for next year
+                  group_by(Player, year) %>% 
+                  mutate(
+                              Previous.Avg.Fantasy.Points = first(Avg.Fantasy.Points), #Add average fantasy points
+                              Previous.Avg.Att = first(Avg.Att), # Add average attempts/game
+                              Previous.Avg.Yds = first(Avg.Yds), # Add average yards/game
+                              Previous.Avg.Yds.Att = first(Avg.Yds.Att), #Add average yards/attempt/game
+                              Previous.Avg.TD = first(Avg.TD), #Add average TDs/game
+                              Previous.Avg.Fum = first(Avg.Fum), #Add average interceptions per game
+                              Previous.Avg.Rec = first(Avg.Rec) #Add average receptions per game
+                        ) %>%
+                  filter(row_number() == 1) %>%  #Only keep one row per player/year group to avoid duplication upon join
+                  select(Player, next.year, Previous.Avg.Fantasy.Points, Previous.Avg.Att, Previous.Avg.Yds, Previous.Avg.Yds.Att, Previous.Avg.TD, Previous.Avg.Fum, Previous.Avg.Rec)
+                  , 
+            by = c("Player" = "Player", "year" = "next.year")
+            ) %>%
+            ungroup()
+
+```
+
+Next, compute a series of cumulative average statistics. These will be the average number of fantasy ponts, attempts, yards, yards/attempt, TDs, fumbles and receptions for a player within that season up to (and including) a certain week. 
+```{R}
+
+df_rb <- df_rb %>%
+      group_by(Player, year) %>%  #Look at players one season at a time
+      arrange(week) %>%
+      mutate(
+            Cum.Avg.Fantasy.Points = cummean(Fantasy.Points), #cumualtive average number of fantasy points per game
+            Cum.Avg.Att = cummean(Att), #cumulative average number of attempts per game
+            Cum.Avg.Yds = cummean(Yds), #cumulative average number of yards per game
+            Cum.Avg.Yds.Att = cummean(Yds.Att), #cumulative average number of yards/attempt per game
+            Cum.Avg.TD = cummean(TD), #cumalative average number of TDs
+            Cum.Avg.Fum = cummean(Fum), #cumulative average number of fumbles
+            Cum.Avg.Rec = cummean(Rec) #cumulative average number of receptions
+      ) %>% 
+      ungroup()
+
+```
+
+
+Now, see if the player has increased in performance from previous week to current week. This may suggest that player is on short term "hot streak."
+```{R}
+df_rb <- df_rb %>%
+      mutate(
+            Att.Increase = Att - Previous.Att, #See the increase/decrease in targets from previous week
+            Yds.Increase = Yds - Previous.Yds, 
+            Yds.Att.Increase = Yds.Att - Previous.Yds.Att
+      )
+```
+
+Now, I'd like to add some features that show how the opposing team does against this player. 
+First, I'll add the average number of fantasy points let up by the opponent to players of the position in quetion in the previous two seasons. 
+```{R}
+df_rb <- df_rb %>%
+      left_join( #add the average points let up by opponent in previous year
+            df_rb %>%
+                  group_by(Opp, year) %>% 
+                  summarise(Avg.Points.Allowed.Last.Year = mean(Fantasy.Points)) %>% #average fantasy points allowed by opponent last year 
+                  ungroup() %>%
+                  mutate(next.year = year + 1) #will be used to join with year column to get last year's avg points allowed
+      ,
+      by = c("Next.Opp" = "Opp", "year" = "next.year")
+      ) %>%
+      left_join( #add the average points let up by next week's opponent two years ago
+            df_rb %>%
+                  group_by(Opp, year) %>% 
+                  summarise(Avg.Points.Allowed.Last.Last.Year = mean(Fantasy.Points)) %>% #average fantasy points allowed by opponent last year 
+                  ungroup() %>%
+                  mutate(next.next.year = year + 2) #will be used to join with year column to get last year's avg points allowed
+      ,
+      by = c("Next.Opp" = "Opp", "year" = "next.next.year")
+      )
+
+
+# When Next.Opp is NA, it means that there is no team to be played next week because the player will be on a bye week. 
+# This will cause the columns 'Avg.Points.Allowed.Last.Year' and 'Avg.Points.Allowed.Last.Last.Year' to be NA as well. 
+# Since I want to use these columns for my model, I'll fill the with something reasonable - the average amount of points allowed. 
+df_rb[is.na(df_rb$Avg.Points.Allowed.Last.Year), "Avg.Points.Allowed.Last.Year"] <- mean(df_rb$Avg.Points.Allowed.Last.Year, na.rm = TRUE)
+df_rb[is.na(df_rb$Avg.Points.Allowed.Last.Last.Year), "Avg.Points.Allowed.Last.Last.Year"] <- mean(df_rb$Avg.Points.Allowed.Last.Last.Year, na.rm = TRUE)
+```
+
+```{R}
+df_rb %>% ggplot(aes(x = Avg.Points.Allowed.Last.Year)) + geom_histogram()
+```
+
+I use many lagged statistics from previous years. This has two problems. First, the state of Football has changed in recent times - offenses are more productive than they used to be. It may not make sense to a model to data from too far back. Second, many of the features I extract rely on looking back to performances of previous years. This results in NA's if there are no years to look back to in the datast. 
+
+As such, I will remove the two earliest years in the dataset - 2011 and 2012. 
+```{R}
+df_rb <- df_rb %>% filter(year > 2012)
+
+```
+
+As I will be incorporating previous weeks' performances into my model, I don't want to take into account breakaway weeks when fitting my regresssion parameters. So as a simple heuristic, I'll ignore weeks that uncharactaristic of the past 3 years of data for each player. 
+
+To determine if a performance is "uncharactaristic", I'll use the boxplot (Tukey) outlier method. 
+```{R}
+test <- 
+df_rb %>% #Join to get the upper and lower Tukey thresholds for a player's fantasy points, based on data since 2014.
+      left_join(
+                df_rb %>%
+                      group_by(Player) %>% #finding average for each player
+                      summarize(
+                            Q25.Fantasy.Points = quantile(Fantasy.Points, probs = .25), #25th quantile of fantasy points earned in games since 2014
+                            Q75.Fantasy.Points = quantile(Fantasy.Points, probs = .75) #75th quantile of fantasy points earned in games since 2014
+                      ) %>%
+                      mutate( IQR.Fantasy.Points = Q75.Fantasy.Points - Q25.Fantasy.Points) %>% #Get the IQR of fantasy points earned since 2014
+                      mutate( 
+                            Lower.Limit.Fantasy.Points = Q25.Fantasy.Points - 3*IQR.Fantasy.Points, 
+                            Upper.Limit.Fantasy.Points = Q75.Fantasy.Points + 3*IQR.Fantasy.Points #calculate lower and upper tukey limits
+                      ) %>%
+                      select(Player, Lower.Limit.Fantasy.Points, Upper.Limit.Fantasy.Points) #keep only columns I want to bring over in join
+                , 
+                by = "Player"
+      ) %>%
+      filter( Fantasy.Points >= Lower.Limit.Fantasy.Points & Fantasy.Points <= Upper.Limit.Fantasy.Points)
+
+
+```
+
+Fill NA values in test
+```{R}
+test[is.na(test)] <- 0
+```
+
+```{R}
+str(test)
+
+```
+
+
+### Create a dummy model 
+```{R}
+model <- lm(data = test, Next.Fantasy.Points ~ Fantasy.Points + Previous.Avg.Yds + Cum.Avg.Yds + Cum.Avg.Rec + Cum.Avg.Yds.Att ,  na.action = na.exclude )
+
+summary(model)
+
+```
+
+
+Add predicitions
+```{R}
+
+test$Predictions = predict(model)
+test$Residuals = resid(model)
+```
+
+```{R}
+qplot(test$Residuals)
+plot(model)
+```
+
+
+
+### Prioritize players for lineup
+```{R}
+      predictions <- test %>% 
+            mutate(max_year = max(year)) %>% 
+            filter(year == max_year) %>% #keep only most recent year's predictions
+            group_by(Player) %>% #group by player to get the most recent week the player has played
+            mutate(max_week = max(week)) %>% 
+            filter(week == max_week) %>% #Only keep each player's last week predictions
+            select (Player, Team, Pos, year, week, Previous.Avg.Fantasy.Points, Predictions) %>% #Information I'd like to see when chosing lineup
+            arrange(desc(Predictions)) %>%
+            ungroup() %>%
+            top_n(20)
+
+      predictions
+
+```
+
+
+```{R}
+write.csv(predictions, "../predictions/week-1/RB.csv")
+```
+

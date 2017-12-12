@@ -1,0 +1,23 @@
+---
+title: "Unique neighborhoods"
+output: html_notebook
+---
+
+```{R}
+
+neighborhoods <- read.csv("neighborhoods.csv")
+df.large <- read.csv("data/clean.csv")
+```
+
+```{R}
+ordered <- df.large %>% group_by(pickup_neighborhood) %>% summarize(count = n()) %>% arrange(desc(count)) %>% ungroup()
+```
+
+```{R}
+v <- as.vector(ordered$pickup_neighborhood[1:100])
+v <- v[!is.na(v)]
+```
+
+```{R}
+write.csv(v, "data/neighborhoods.csv", row.names = FALSE)
+```

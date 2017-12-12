@@ -1,0 +1,56 @@
+```{R}
+p_to_vec <- function(p,size = 1, x_neg = .1666, x_pos = .1666, y_neg = .1666, y_pos = .1666, z_neg = .1666, z_pos = .1666){
+      # create intervals for cdf
+      intervals = cumsum(c(x_neg, x_pos, y_neg, y_pos, z_neg, z_pos))
+
+
+      if(p < intervals[1]){
+            return(c(-size,0,0))
+      }
+      else if(between(p, intervals[1], intervals[2])){
+            return(c(size,0,0))
+      }
+      else if(between(p, intervals[2], intervals[3])){
+            return(c(0,-size,0))
+      }
+      else if(between(p, intervals[3], intervals[4])){
+            return(c(0,size,0))
+      }
+      else if(between(p, intervals[4],intervals[5])){
+            return(c(0,0,-size))
+      }
+      else {
+            return(c(0,0,size))
+      }
+}
+
+pvec_to_matrix <- Vectorize(p_to_vec)
+```
+```{R}
+n = 1000
+Zt <- pvec_to_matrix(runif(n = n), size = 1)
+Xt <- apply(Zt, 1, cumsum)
+```
+```{R}
+df <- as.data.frame(t(Zt))
+
+test <- df %>% mutate( cum.x = cumsum(V1) + ifelse(lag(cum.x, 1) > 0, -1/row_number(), 1/row_number()))
+
+```
+
+
+```{R}
+f <- function(s){
+      return(s)
+      }
+
+fs <- Vectorize(f)
+
+fs(runif(1))
+```
+
+
+
+
+
+

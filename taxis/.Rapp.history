@@ -1,0 +1,256 @@
+qt(df=4, p= .05, lower.tail=F)
+qt(df=4, p= .05, lower.tail=F) * sqrt(69.5/5) + 80
+qt(df=4, p= .05, lower.tail=F) * sqrt(69.5/5) + 800
+qt(df=4, p= .05, lower.tail=T)
+qt(df=4, p= .05, lower.tail=T) * sqrt(69.5/5) + 800
+var(a)
+(651-800)/sqrt(69.5/5)
+qt(df=4, -39.96491)
+qt(df=4, p= -39.96491)
+qt(df=4, p= --3)
+pt(df=4, q = -39.96491)
+mean(a)
+pbinom(7, 20, .2)
+pbinom(6, 20, .2)
+pbinom(1, 20, .2)
+1-(0.9133075 - 0.06917529)
+1-(pbinom(q=6, size = 20, p = 0) -pbinom((q=1, size = 20, p = 0) ))
+1-(pbinom(q=6, size = 20, p = 0) -pbinom(q=1, size = 20, p = 0) ))
+1-(pbinom(q=6, size = 20, p = 0) -pbinom(q=1, size = 20, p = 0) )
+1-(pbinom(q=6, size = 20, p = .1) -pbinom(q=1, size = 20, p = .1) )
+1-(pbinom(q=6, size = 20, p = .2) -pbinom(q=1, size = 20, p = .2) )
+1-(pbinom(q=6, size = 20, p = .3) -pbinom(q=1, size = 20, p = .) )
+1-(pbinom(q=6, size = 20, p = .3) -pbinom(q=1, size = 20, p = .3) )
+1-(pbinom(q=6, size = 20, p = .4) -pbinom(q=1, size = 20, p = .4) )
+1-(pbinom(q=6, size = 20, p = .5) -pbinom(q=1, size = 20, p = .5) )
+1-(pbinom(q=6, size = 20, p = .6) -pbinom(q=1, size = 20, p = .6) )
+1-(pbinom(q=6, size = 20, p = .7) -pbinom(q=1, size = 20, p = .6) )
+1-(pbinom(q=6, size = 20, p = .7) -pbinom(q=1, size = 20, p = .7) )
+1-(pbinom(q=6, size = 20, p = .8) -pbinom(q=1, size = 20, p = .8) )
+qpois(1 - .068, 5)
+a = qt(df = 7, p = .025, lower.tail=F)
+a
+a = qt(df = 7, p = .025, lower.tail=F)*(.03962*sqrt(1/4  + 1/5))
+a
+b = .22 - .17
+b - 1
+b -a
+b + a
+qnorm(.975)
+qnorm(.975)/(sqrt(100^2*105^2))
+a = qnorm(.975)/(sqrt(100^2*105^2))
+b = 1/105.2
+b -a
+b + a
+a
+a = qnorm(.025, lower.tail=F)*sqrt((105.2^2)/100)
+a
+b = 1/105.2
+b
+b-a
+b+a
+exp(-1*(b - a)*300)
+1-ppois(20*.45, 5)
+1-ppois(20*.45, 20)
+ppois(20*.45, 20)
+(-20*(1/2 - 1/4)) / (20*(log(.25) - log(.5)))
+(-20*(1/2 - 1/4)) / (20*(log(.5) - log(.25)))
+?log
+ppois(q = 20*.45, lambda = 20/2)
+ppois(q = 20*.3606, lambda = 20/2)
+(538.7 - 550)/(37.5/sqrt(12))
+pt(-1.043849)
+pt(-1.043849, 11)
+(535.7 - 550)/(37.5/sqrt(12))
+pt(-1.320977, 11)
+r
+a =
+a
+a = pnorm(.025, lower.tail=F)
+a
+a = qnorm(.025, lower.tail=F)
+a
+a = a * sqrt(1/(100*105.2^2))
+a
+b = 1/105.2
+b - a
+b+ a
+exp(-0.00764262 *300)
+exp(-0.01136879 *300)
+2*(1-pnorm(2.5))
+men = c(96.9, 97.4, 97.5, 97.8, 97.8, 98, 98.6, 98.8)
+women = c(97.8, 98, 98.2, 98.2, 98.2, 98.6, 98.8, 99.2, 99.4)
+length(men()
+)
+length(men)
+length(women)
+mean(men)
+mean(women)
+sd(men)
+sd(women)
+.5(.625 + .548)
+.5*(.625 + .548)
+.5*(var(men)+ var(women))
+sqrt(0.3448413)
+(98.75-98.5)/(.5875/sqrt(.25))
+2 - 2*pt(0.212766)
+2 - 2*pt(0.212766, df = 14)
+.5*(3.92^2 + 2.98^2)
+sqrt(12.1234)
+qt(df=18, p= .95)
+s = sqrt(12.1234)
+s
+t-stat = 2
+tstat = (14.5 - 11.1)/(s*sqrt(2/10))
+tstat
+2*pt(q=tstat, df = 18, lower.tail = F)
+t-stat
+tstat
+pt(tstat, df=18)
+pt(tstat, df=18, lower.tail = F)
+zstat
+zstat= (9017-5853)/(sqrt(7162^2/130 + 1961^2/80))
+zstat
+qnorm(.99)
+zstat
+zstat= (9017-5853)/(sqrt(7162^2/130 + 1961^2/80))
+zstat
+zstat= (9017-5853)/(sqrt(7162^2/130 + 1961^2/80))p
+qnorm(.99)
+-2/(sqrt(2.1/40))
+-1.4/(sqrt(2.1/40))
+-1.4/(sqrt(2.1^2/40))
+zstat = (1.65/1.43)/(sqrt(.26^2/30 + .22^2/35))
+zstat
+zstat = (1.65-1.43)/(sqrt(.26^2/30 + .22^2/35))
+zstat
+qnorm(.005, lower.tail = F)
+2- 2*pnorm(3.64)
+-.3/sqrt(.4*.6/6124 + .37*.63/5512)
+(.4*6124 + .37*5512)/(6124 + 5512)
+zstat = (.4 - .37)/sqrt(.386*(1-.286)+ (1/6124 + 1/5512))
+zstat
+zstat = (.4 - .37)/sqrt(.386*(1-.386)+ (1/6124 + 1/5512))
+zstat
+zstat = (.4 - .37)/sqrt(.38*(1-.38)+ (1/6124 + 1/5512))
+zstat
+qnorm(.05)
+1-pnorm(2.576)
+1-pnorm(4.063)
+pnorm(-1.36)
+pnorm(-1.259)
+qnorm(.005, lower.tail = False)
+qnorm(.005, lower.tail = F)
+R
+x
+x = 1.65 - 1.43
+y = qnorm(.005, lower.tail = F)*sqrt(.26^2/30 + .22^2/35)
+x - y
+x + y
+2 - 2*pnorm(1.5767)
+pnorm(-1.711)
+2 - 2*pnorm(1.73)
+qnorm(.01)
+qnorm(.01, lower.tail = F)
+curve(x(1-exp(2(3-5))) )
+curve(x*(1-exp(2(3-5))) )
+curve(x*(1-exp(2*(3-5))) )
+prices = c(27.6, 32.5, 35.9, 39.3, 44.2, 48.8, 55.7, 62.9)
+length(prices)
+years = (1:8)
+years
+prices
+s.xy = sum((prices - mean(prices))*(years - mean(years)))
+s.xx = sum((years - mean(years))^2)
+sxx
+s.xx
+s.xy
+beta.0hat
+beta.1hat <- s.xy/s.xx
+beta.0hat <- mean(prices) - beta.1hat*mean(years)
+beta.0hat
+beta.1hat
+plot(years, prices)
+curve(beta.0hat + beta.1hat*x)
+plot(years, prices)
+curve(beta.0hat + beta.1hat*x)
+plot(years, prices)
+abline(beta.1hat, beta.0hat)
+abline(beta.0hat, beta.1hat)
+plot(years, prices)
+abline(beta.0hat, beta.1hat)
+sse = sum((prices - (beta.0hat + beta.1hat*years))^2)
+sse
+s.sq = sse/(length(years) - 2)
+s.sq
+sleep = c(8,8,12,12,16,16,20,20,24,24)
+sleep
+length(sleep)
+errors <- c(8,6,6,10,8,14,14,12,16,12)
+errors
+sleep
+s.xy = sum((errors - mean(errors))*(sleep - mean(sleep)))
+s.xx - sum((sleep -mean(sleep))^2)
+s.xx = sum((sleep -mean(sleep))^2)
+s.xx
+beta.1hat = s.xy/s.xx
+beta.0hat = mean(errors) - mean(sleep)*beta.1hat
+beta.0hat
+beta.1hat
+s.sq = sse/ (length(errors) - 2)
+s.sq
+c11 = 1/s.xx
+c11
+t.obs <- (beta.1hat - 0)/(sqrt(s.sq*c11))
+t.obs
+pt(t.obs, lower.tail = False)
+pt(t.obs, lower.tail = F)
+pt(t.obs,df = length(errors) - 2,  lower.tail = F)
+plot(sleep, errors)
+abline(beta.0hat, beta.1hat)
+diff - qt(df = length(errors) -2, p = .025)
+diff - qt(df = (length(errors) -2), p = .025)
+diff = qt(df = (length(errors) -2), p = .025)
+diff
+diff = qt(df = (length(errors) -2), p = .025, lower.tail = F)
+diff
+beta.1hat - diff
+beta.1hat + diff
+beta.1hat
+x
+x = (.5-2000/410)/(sqrt(2000*409/410^2))
+x
+1 - pnorm(x)
+1- (409/410)^2000
+d = c(785 + 805 + 790 + 793 + 902)
+d = c(785 + 805 + 790 + 793 + 802)
+c
+d
+c
+d
+d = c(785 , 805 , 790 ,793 , 802)
+d
+var(d)
+mean(d)
+dat <- data.frame(Offence =  c("Assault","Assault","Assault","Weapon","Assault","Burglary"),#
+                  Date = c("2015-10-02","2015-10-03","2015-10-04","2015-04-12","2015-06-30","2015-09-04"),#
+                  Longitude = c(-122.3809, -122.3269, -122.3342, -122.2984, -122.3044, -122.2754),#
+                  Latitude = c(47.66796,47.63436,47.57665,47.71930,47.60616,47.55392),#
+                  intensity = c(10,20,30,40,50,30000))
+date
+dat
+j <- paste0("[",dat[,"Latitude"], ",", dat[,"Longitude"], ",", dat[,"intensity"], "]", collapse=",")#
+    j <- paste0("[",j,"]")#
+    j
+library(jsonlite)
+toJson(dat[,c("Longitude", "Latitude", "intensity")])
+toJSON(dat[,c("Longitude", "Latitude", "intensity")])
+?paste0
+j
+class(j)
+dat
+as.vector(dat)
+as.vector(as.matrix(dat))
+as.vector(dat)
+class(as.vector(dat))
+setwd("Desktop/taxis/")

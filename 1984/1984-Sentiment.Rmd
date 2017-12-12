@@ -1,0 +1,396 @@
+```{R}
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(stringr)
+library(tidytext)
+library(ggthemes)
+library(wordcloud)
+library(reshape2)
+library(knitr)
+library(RcppRoll)
+library(gridExtra)
+library(igraph)
+library(ggraph)
+```
+
+Load the book line by line. 
+```{R}
+f <- file("1984.txt")
+# open all lines
+all_lines <- readLines(f)
+# Store in a dataframe with one line per row
+orwell.1984 <- data_frame(line = 1:length(all_lines), text = all_lines)
+
+close(f)
+rm(all_lines)
+
+```
+
+### Word frequencies
+
+First,  I'll look at the frequencies of words
+```{R}
+orwell.1984 %>% 
+      unnest_tokens(word, text) %>%
+      count(word, sort = TRUE)
+
+```
+The most commmon word are stopwords, which aren't very meaningful. Removing them:
+```{R}
+orwell.1984 %>%
+      unnest_tokens(word, text) %>%
+      anti_join(stop_words %>% filter(lexicon == "SMART")) %>%
+      count(word, sort = TRUE) %>% 
+      top_n(20) %>% 
+      mutate(word = reorder(word, n)) %>%
+      ggplot(aes(x = word, y = n)) + 
+      geom_col() + 
+      xlab(NULL) + 
+      ylab("Counts") + 
+      coord_flip() + 
+      theme_minimal()
+
+```
+
+### Sentiment contributions
+
+Now, it might be intesting to see what are the most common positive and negative sentiment words, and which words contribute the most to the Overall sentiment of the book. 
+
+```{R}
+orwell.1984 %>%
+      unnest_tokens(word, text) %>%
+      anti_join(stop_words %>% filter(lexicon == "SMART")) %>% 
+      inner_join(get_sentiments("afinn")) %>%
+      group_by(word) %>%
+      summarise(sentiment.contribution = sum(score),
+                score = first(score)) %>%
+      ungroup() %>%
+      mutate(sentiment = ifelse(score > 0, "positive", "negative")) %>%
+      mutate(word = reorder(word, abs(sentiment.contribution))) %>%
+      group_by(sentiment) %>%
+      top_n(10, abs(sentiment.contribution)) %>%
+      ungroup() %>%
+      ggplot(aes(x = word, y = sentiment.contribution, fill = sentiment)) +
+      geom_col() +
+      facet_wrap(~sentiment, scales = "free_y") +
+      coord_flip() + 
+      theme_minimal()
+```
+
+
+### Looking at sentiment progression throughout novel
+```{R}
+afinn.sentiments <-  orwell.1984 %>%
+      unnest_tokens(word, text) %>%
+      anti_join(stop_words %>% filter(lexicon == "SMART")) %>%
+      inner_join(get_sentiments("afinn")) %>%
+      mutate(index = line %/% 50) %>%
+      group_by(index) %>%
+      summarise(sentiment = sum(score)) %>%
+      ungroup() %>%
+      mutate( lexicon = "AFINN")
+```
+```{R}
+overall.sentiment <- afinn.sentiments %>%
+ggplot(aes(x = index, y = sentiment, fill = sentiment > 0)) +
+      geom_col(show.legend = FALSE) + 
+      theme_minimal() 
+
+overall.sentiment +annotate("text", x = 55, y = 23, label = "Winston is with Julia in their getaway in Mr. Charrington's office.\nThey drink real coffee with real sugar for the first time,\nand lie together in bed in the sun. ", size = 2.2) + 
+      annotate("text", x = 95, y = -75, label = "Winston and Julia get caught plotting against The Party.\nThey are are siezed by the thought police, and brought to\nthe Ministry of Love to be tortured into submission to the party.", size = 2.2) + 
+      annotate("text", x = 113, y = 20, label = "Winston's will is broken by the Party. He casts all\ndoubt over the inconsistencies of theirstories out of\nhis mind. He celebrates The Party's victory in their\nimaginary wars, and ability to exceed imaginary\neconomic forecasts.", size = 2.2)
+```
+```{R}
+bing.sentiments <- orwell.1984 %>%
+      unnest_tokens(word,text) %>%
+      anti_join(stop_words %>% filter(lexicon == "SMART")) %>%
+      inner_join(get_sentiments("bing")) %>%
+      mutate(score = ifelse(sentiment == "positive", 1, -1)) %>%
+      mutate(index = line %/% 50) %>%
+      group_by(index) %>%
+      summarize(sentiment = sum(score)) %>%
+      ungroup() %>%
+      mutate(lexicon = "Bing")
+```
+```{R}
+bind_rows(afinn.sentiments, bing.sentiments) %>%
+      ggplot(aes(x = index, y = sentiment, fill = sentiment > 0)) +
+      geom_col(show.legend = FALSE) + 
+      facet_wrap(~lexicon, ncol = 1) + 
+      theme_minimal()
+```
+
+Both lexicons agree: this is a pretty negative book. The Bing lexicon is more pessimistic - perhaps because it rates words on a binary scale (positive or negative), while the AFINN lexicon scores words on a scale of [-5, 5] - it can see if periods of high sentiment have _very_ high sentiment. 
+
+
+```{R}
+orwell.1984 %>%
+      unnest_tokens(word, text) %>%
+      anti_join(stop_words %>% filter(lexicon == "SMART")) %>%
+      inner_join(get_sentiments("nrc")) %>%
+      count(word, sentiment, sort = TRUE) %>%
+      group_by(word, n) %>%
+      summarize(sentiment = first(sentiment)) %>%
+      ungroup() %>%
+      acast(word ~ sentiment, value.var = "n", fill = 0) %>%
+      comparison.cloud(colors = rainbow(10), max.words = 100, title.size = 1.5)
+      
+      
+```
+
+
+## Modeling relationship dynamics. 
+
+In _1984_, the protagonist Winston has two polarized relationships. One with a woman named Julia, and another with an inner party member named O'brien. 
+
+
+To summaraize these relationships: Winston initially despises Julia. He sees her as a cog to the system he detests, and is infuriated by his sexual attraction to her. His view of Julia change suddenly when she approaches him and announces her love for him. An excerpt from the novel shows this clearly:
+
+---
+
+"What is your name?" said Winston .
+" Julia ." "I know yours." "It's Winston — Winston Smith ."
+"How did you find that out?"
+"I expect I'm better at finding things out than you are, dear."
+"Tell me, what did you think of me before that day I gave you the note?"
+He did not feel any temptation to tell lies to her.
+It was even a sort of love-offering to start off by telling the worst.
+"I hated the sight of you," he said.
+"I wanted to rape you and then murder you afterwards."
+"Two weeks ago I thought seriously of smashing your head in with a cobblestone."
+"If you really want to know, I imagined that you had something to do with the Thought Police ."
+The girl laughed delightedly, evidently taking this as a tribute to the excellence of her disguise.
+"Not the Thought Police !"
+"You didn't honestly think that?"
+"Well, perhaps not exactly that.""But from your general appearance — merely because you're young and fresh and healthy, you understand — I thought that probably —"
+"You thought I was a good Party member."
+
+---
+
+They become illicit lovers and plot against the party together, until they are both captured by the Thought Police and brainwashed to a point where they refuse to feel compassion. 
+
+O'brien and Winston have an interesting relationship throughout the novel. O'brien is a leader in the Inner Party, though Winston has always felt an attraction towards him. He sees O'brien as a father figure, and he often dreams of O'brien leading him to "a place where there is no darkness." O'brien introduces Winston and Julia to _The Brotherhood_ - a group of extremests rebeling against The Party. It turs out that O'brien only did this to incriminate Winston and that he has been watching him for years. After Winston is arrested for plotting against the party, O'brien tortures him until he has no more thoughts of his own and only lives to serve The Party. 
+
+
+These relationships are interesting because they change so sharply thorughout the novel. Let's see if we can detect this using `tidytext`'s sentiment analysis tools. 
+
+### Winston and Julia
+
+In the begining of the novel, Winston does not know Julia's name. He refers to her as "the girl with dark hair" or simply "the girl."
+
+```{R}
+orwell.1984 %>%
+      filter(!is.na(str_match(text, "the girl"))) %>%
+      select(text)
+```
+For simplicity, I'll convert the instances of the word pair "the girl" to "Julia". 
+d
+```{R}
+# Displaying changes
+kable(
+orwell.1984 %>% 
+      mutate(new = str_replace_all(text, pattern = "(T|t)he girl( with dark hair|)",
+                                   replacement = "Julia")) %>% 
+      filter(new != text) %>%
+      filter(row_number() <= 10)
+)
+```
+
+This seams to be doing something reasonable. 
+```{R}
+orwell.1984 <- orwell.1984 %>%
+      mutate(text = str_replace_all(text, "(T|t)he girl( with dark hair|)",
+                                   replacement = "Julia"))
+```
+
+#### Tracking sentiment towards Julia. 
+
+A first approach to looking at the developement of Winston and Julia's relationship would be to study sentences in which Julia is mentioned.
+
+If we do this, however, we lose valuable discourse about Julia and Winston's feelings for her. Consder the following sentence: 
+
+---
+
+_At five minutes past the hour the girl had still not appeared._
+
+---
+
+As is, this is a pretty neutral sentence. But if we look at the following sentences:
+
+---
+
+_At five minutes past the hour the girl had still not appeared._
+_Again the terrible fear seized upon Winston ._
+_She was not coming, she had changed her mind!_
+
+---
+
+We can see that Winston is feeling apprehensive and self-concious feelings towards Julia. This context is important. 
+
+Thus, in my analysis of Winston's relationship to Julia, I'll keep the sentence before his mention of her, as well as the three sentences that follow as a hueristic. 
+
+
+```{R}
+text.julia <- orwell.1984 %>%
+      mutate(mentions.julia = !is.na(str_match(text, "Julia"))) %>% 
+      mutate(mentions.julia = mentions.julia |
+                   lag(n = 1, mentions.julia) |
+                   lead(n = 1, mentions.julia) |
+                   lead(n = 2, mentions.julia)) %>%
+      filter(mentions.julia) %>% 
+      select(-mentions.julia)
+
+```
+
+```{R}
+text.julia %>% unnest_tokens(word, text) %>%
+      anti_join(stop_words %>% filter(lexicon == "SMART")) %>%
+      inner_join(get_sentiments("afinn")) %>%
+      arrange(line) %>% 
+      mutate(index = line %/% 5) %>%
+      group_by(index) %>%
+      summarize(sentiment = sum(score)) %>%
+      ungroup() %>%
+      ggplot(aes(x = index, y = sentiment)) +
+      geom_col(show.legend = FALSE, aes(fill = sentiment > 0)) +
+      annotate("text", x = 401, y = -8, label = "Julia suddenly tells\nWinston she loves him.") +
+      geom_segment(
+        aes(x = 350, y = -7, xend = 401, yend = -1),
+        arrow = arrow(length = unit(0.2, "cm"))
+      ) + 
+      annotate("text", x = 700, y = 10, label = "Winston and Julia Meet at\nMr. Charrington's attick for\nthe first time.") +
+      geom_segment(
+        aes(x = 700, y = 7.5, xend = 535, yend = 5),
+        arrow = arrow(length = unit(0.2, "cm"))
+      ) +
+      geom_hline(aes(yintercept = 0))+
+      theme_few()
+```
+
+There are no obvious patterns in the sentiments of the lines that refer to Julia. But recall from the first couple of visualizations - this text has an overwhelmingly negative sentiment. Therefore, we cannot conclude that becuase the language has a negative sentiment in passages refering to Julia, it is becasue Winston is speaking poorly of her.
+
+What we're really after is the _change_ in overall sentiment in sentences referring to Julia. To capture this, I'll compute a windowed average sentiment of lag $\pm 25$. That is, for each line, the windowed average is the average sentiment of the 25 lines before and the 25 lines after. 
+
+Once I have the windowed averages, I can can look at the difference between the average sentiment of lines referring to Julia and the windowd average around those lines. 
+
+
+```{R}
+rolling.average.sentiments <- data.frame(line = 1:6366) %>%
+      left_join(
+            orwell.1984 %>%
+                  unnest_tokens(word, text) %>%
+                  anti_join(stop_words %>% filter(lexicon == "SMART")) %>%
+                  inner_join(get_sentiments("afinn")) %>%
+                  group_by(line) %>%
+                  summarize(sentiment = sum(score)) %>% arrange(line)
+            ) %>%
+      mutate(sentiment = ifelse(is.na(sentiment), 0, sentiment)) %>%
+      mutate(rolling.sentiment = roll_mean(sentiment, n = 50, fill = 0)) %>%
+      mutate(rolling.sentiment.sd = roll_sd(sentiment, n = 50, fill = 0))
+
+```
+
+Just to make sure that this is doing something reasonable, I'll compare the windowed averages to the cumulative sentiment of 50 line bins which I visualized earlier. (These should look almost the same in distribution, differing by a factor of 50.)
+
+```{R}
+rolling.average.sentiments.plot <-  rolling.average.sentiments %>% ggplot(aes(x = line, y = rolling.sentiment, fill = rolling.sentiment > 0)) +
+      geom_col(show.legend = FALSE) + theme_minimal() + labs(title = "50 Line (Centered) Moving Average Sentiment")
+```
+```{R}
+grid.arrange(rolling.average.sentiments.plot, 
+            overall.sentiment + labs(title = "Cumulative Sentiment Per 50 Line Groups"))
+
+```
+ 
+ Now we can use these windowed averages to see the difference between the sentiment in the lines referring to Julia and the broader local sentiment. 
+
+```{R}
+text.julia %>% unnest_tokens(word, text) %>%
+      anti_join(stop_words %>% filter(lexicon == "SMART")) %>%
+      inner_join(get_sentiments("afinn")) %>%
+      group_by(line) %>%
+      summarize(avg.sentiment = mean(score)) %>%
+      ungroup() %>%
+      inner_join(rolling.average.sentiments) %>%
+      mutate(sentiment.delta = (avg.sentiment - rolling.sentiment)/rolling.sentiment.sd) %>%
+      ggplot(aes(x = line, y = sentiment.delta, fill = sentiment.delta > 0)) +
+      geom_col(show.legend = FALSE)  + 
+      geom_hline(aes(yintercept = 0))+
+      theme_few() + 
+      labs(title = "Difference In Sentiment Sentences Referring to Julia and Local Average",
+           subtitle = "Standardized By 50 Line Two Way Rolling Average and Standard Deviation") 
+
+
+```
+
+
+
+
+```{R}
+julia.wordcloud <- text.julia %>% unnest_tokens(word, text) %>%
+      anti_join(stop_words %>% filter(lexicon == "SMART")) %>%
+      inner_join(get_sentiments("bing")) %>%
+      count(word, sentiment, sort = TRUE) %>%
+      acast(word ~ sentiment, value.var = "n", fill = 0) %>%
+      comparison.cloud(colors = c( "#d62f11", "#35b692"), max.words = 50, title.size = 1.5)
+
+```
+```{R}
+overall.wordcloud <- orwell.1984 %>% unnest_tokens(word, text) %>%
+      anti_join(stop_words %>% filter(lexicon == "SMART")) %>%
+      inner_join(get_sentiments("bing")) %>%
+      count(word, sentiment, sort = TRUE) %>%
+      acast(word ~ sentiment, value.var = "n", fill = 0) %>%
+      comparison.cloud(colors = c( "#d62f11", "#35b692"), max.words = 50, title.size = 1.5)
+
+```
+
+### Winston and O'brien
+```{R}
+ text.obrien <- orwell.1984 %>%
+      mutate(mentions.obrien = !is.na(str_match(text, "O'Brien"))) %>% 
+      mutate(mentions.obrien = mentions.obrien |
+                   lag(n = 1, mentions.obrien) |
+                   lead(n = 1, mentions.obrien) |
+                   lead(n = 2, mentions.obrien)) %>%
+      filter(mentions.obrien) %>% 
+      select(-mentions.obrien)
+```
+
+```{R}
+text.obrien %>% unnest_tokens(word, text) %>%
+      anti_join(stop_words %>% filter(lexicon == "SMART")) %>%
+      inner_join(get_sentiments("afinn")) %>%
+      arrange(line) %>% 
+      mutate(index = line %/% 5) %>%
+      group_by(index) %>%
+      summarize(sentiment = sum(score)) %>%
+      ungroup() %>%
+      ggplot(aes(x = index, y = sentiment)) +
+      geom_col(show.legend = FALSE, aes(fill = sentiment > 0)) +
+      geom_hline(aes(yintercept = 0))+
+      theme_few()
+
+```
+
+```{R}
+text.obrien %>% unnest_tokens(word, text) %>%
+      anti_join(stop_words %>% filter(lexicon == "SMART")) %>%
+      inner_join(get_sentiments("afinn")) %>%
+      group_by(line) %>%
+      summarize(avg.sentiment = mean(score)) %>%
+      ungroup() %>%
+      inner_join(rolling.average.sentiments) %>%
+      mutate(sentiment.delta = (avg.sentiment - rolling.sentiment)/rolling.sentiment.sd) %>%
+      ggplot(aes(x = line, y = sentiment.delta, fill = sentiment.delta > 0)) +
+      geom_col(show.legend = FALSE)  + 
+      geom_hline(aes(yintercept = 0))+
+      theme_few() + 
+      labs(title = "Difference In Sentiment Sentences Referring to Julia and Local Average",
+           subtitle = "Standardized By 50 Line Two Way Rolling Average and Standard Deviation") 
+
+```
+
+
+

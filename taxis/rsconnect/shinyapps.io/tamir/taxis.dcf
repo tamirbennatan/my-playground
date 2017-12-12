@@ -1,0 +1,13 @@
+name: taxis
+title:
+username:
+account: tamir
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 215837
+bundleId: 985512
+url: https://tamir.shinyapps.io/taxis/
+when: 1505696554.80831
+asMultiple: FALSE
+asStatic: FALSE
+ignoredFiles: clean.csv|data_process.nb.html|data_process.Rmd|neighborhoods.csv|unique_neighborhoods.nb.html|unique_neighborhoods.Rmd

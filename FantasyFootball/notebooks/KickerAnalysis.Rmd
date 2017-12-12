@@ -1,0 +1,120 @@
+---
+title: "Kicker Analysis"
+output: html_notebook
+---
+
+Load libraries
+```{R}
+library(knitr)
+library(devtools)
+library(dplyr)
+library(ggplot2)
+library(gridExtra)
+```
+
+Load kicker data
+```{R}
+df_k <- read.csv("../processed_data/player_data/K/K.csv")
+head(df_k)
+```
+
+
+```{R}
+g1 <- qplot(df_k$FG.Att)
+g2 <- qplot(df_k$Pct)
+g3 <- qplot(df_k$XP.Att)
+g4 <- qplot((df_k$XP.Made/df_k$XP.Att)*100)
+grid.arrange(g1, g2, g3, g4, ncol = 2)
+```
+
+Kickers make most of their fieldgoals and extra points. Therefore, I want kickers that see the most attempts. 
+
+Add next year's fantasy points (resopnse variable)
+```{R}
+df_k <- df_k %>%
+      group_by(Player, year) %>%
+      mutate(Next.Fantasy.Points = lead(n = 1, Fantasy.Points,order_by = week) ) %>%
+      ungroup()
+```
+
+Add a series of statistics from prevoius season
+```{R}
+df_k <- df_k %>% 
+      left_join(
+            df_k %>% 
+                  group_by(Player, year) %>%
+                  summarize(Previous.Avg.FG.Att = mean(FG.Att),
+                            Previous.Avg.FG.Made = mean(FG.Made), 
+                            Previous.Avg.Pct = mean(Pct), 
+                            Previous.Avg.XP.Made = mean(XP.Made), 
+                            Previous.Avg.XP.Att = mean(XP.Att)  ) %>%
+                  ungroup() %>%
+                  mutate(next.year = year + 1),
+            by = c("year" = "next.year", "Player" = "Player")
+      )
+```
+
+Add some cumuative statistics
+```{R}
+df_k <- df_k %>%
+      group_by(Player, year) %>%
+      arrange(week) %>%
+      mutate(
+            Cum.Avg.FG.Att = cummean(FG.Att), 
+            Cum.Avg.FG.Made = cummean(FG.Made), 
+            Cum.Avg.Pct = cummean(Pct), 
+            Cum.Avg.XP.Made = cummean(XP.Made), 
+            Cum.Avg.XP.Att = mean(XP.Att)
+      ) 
+```
+keep only 2012+ data to fit model on, since 2011 is the first year in the dataset and I'm using statistics from previous year.
+
+```{R}
+test <- df_k %>% filter(year > 2011)
+test[is.na(test)] = 0
+```
+
+Fit dummy model
+```{R}
+#Dummy model
+model <- lm(data = test, Next.Fantasy.Points ~ Previous.Avg.FG.Att  + Previous.Avg.XP.Att + Cum.Avg.FG.Att )      
+
+summary(model)
+```
+ 
+ 
+
+Add predicitions
+```{R}
+
+test$Predictions = predict(model)
+test$Residuals = resid(model)
+```
+
+```{R}
+qplot(test$Residuals)
+plot(model)
+```
+
+
+### Prioritize players for lineup
+```{R}
+      predictions <- test %>% 
+            mutate(max_year = max(year)) %>% 
+            filter(year == max_year) %>% #keep only most recent year's predictions
+            group_by(Player) %>% #group by player to get the most recent week the player has played
+            mutate(max_week = max(week)) %>% 
+            mutate(Previous.Avg.Fantasy.Points = NA) %>%
+            filter(week == max_week) %>% #Only keep each player's last week predictions
+            select (Player, Team, Pos, year, week, Previous.Avg.Fantasy.Points, Predictions) %>% #Information I'd like to see when chosing lineup
+            arrange(desc(Predictions)) %>%
+            ungroup() %>%
+            top_n(20)
+
+      predictions
+```
+
+```{R}
+#Write predictions
+write.csv(predictions, "../predictions/week-1/K.csv")
+```

@@ -1,0 +1,249 @@
+---
+title: "Data Processing "
+output: html_notebook
+---
+
+##### First, open a small sample
+```{R}
+setwd("~/Desktop/taxis/")
+df <- read.csv("data/sample.csv", nrows = 200)
+```
+
+
+##### Open up the shape files, to get the NYC neighborhoods in the data frame (from the longitude/logitude pairs)
+```{R}
+library(dplyr)
+library(RCurl)
+library(RJSONIO)
+library(lubridate)
+library(ggplot2)
+```
+##### Functions for getting neighborhood from Google Maps API
+
+Here's a function to build a URL to call the google maps API
+```{R}
+url <- function(latitude, longitude, return.call = "json", sensor = "false", result_type = "neighborhood", api_key = "") {
+  root <- "https://maps.google.com/maps/api/geocode/"
+  u <- paste(root, return.call, "?latlng=", latitude, ',', longitude,'&result_type=', result_type, '&key=', api_key, sep = "")
+  return(URLencode(u))
+}
+```
+```{R}
+my_key <- "AIzaSyCokPde2Hapa7t7grSQEfM5LEeC8SsNwX8"
+```
+
+```{R}
+geoCode <- function(latitude, longitude, verbose=FALSE) {
+  if(verbose) cat(latitude,longitude,"\n")
+  u <- url(latitude = latitude, longitude =longitude, api_key = my_key)
+  doc <- getURL(u)
+  x <- fromJSON(doc,simplify = FALSE)
+  if(x$status=="OK") {
+    lat <- x$results[[1]]$geometry$location$lat
+    lng <- x$results[[1]]$geometry$location$lng
+    location_type  <- x$results[[1]]$geometry$location_type
+    neighborhood  <- x$results[[1]]$address_components[[1]]$long_name
+    Sys.sleep(0.5)
+    return(neighborhood)
+  } else {
+        print(paste("ERROR: status:", x$status, 'url:',  url(latitude = latitude, longitude =longitude, api_key = ""), sep = " "))
+    return(NA)
+        
+  }
+}
+```
+# Test output
+```{R}
+geoCode(40.714224,-73.961452)
+
+```
+
+
+now, I'm going to need to add the neighborhood for each row in the dataframe. Before I deal with that, let's see if this vectorizes nicely using `dplyr` and `purrr` 
+```{R}
+
+vect.geoCode <- Vectorize(geoCode, vectorize.args = c("latitude", "longitude"))
+
+```
+# Testing 
+```{R}
+vect.geoCode(df$dropoff_latitude[1:10], df$dropoff_longitude[1:10])
+```
+
+Now let's see if this works dplyr. 
+```{R}
+df %>% top_n(10) %>% mutate( neighborhood = vect.geoCode(pickup_latitude, pickup_longitude))
+```
+
+Looking at where this breaks - All the NA values in these 10 examples are JFK airpoirt. I'll need to fill these in later. 
+
+---
+
+#### Normalizing data
+
+```{R}
+
+df.large <- read.csv("data/train.csv")
+nrow(df.large)
+```
+
+taking a look at the distribution of durations: 
+```{R}
+df.large %>% ggplot(aes(x = trip_duration)) + geom_histogram()
+```
+
+**WAAAY** too skewed. The duration is in seconds. 3,000,000 seconds? That's an 83 hour taxi ride. No way. 
+
+For my visualization purposes, I'm interested in "regular" rides - rides that are comparable so that the visualization is meaningful. 
+Withougt thinking too much, I'll limit rides to those under two hours long.
+```{R}
+df.large %>% filter(trip_duration < 7200) %>% ggplot(aes(x = trip_duration)) + geom_histogram()
+```
+
+```{R}
+# limit to trips of two ours in duration
+df.large <- df.large %>% filter(trip_duration <= 7200) %>%
+      mutate(trip_duration = trip_duration/60) # Change time units to minuts, not seconds
+
+```
+
+Now to see if the number of passengers makes sense: 
+```{R}
+df.large %>% group_by(passenger_count) %>% summarize(count = n())
+```
+I'll only keep records with between 1 and 6 passengers. 
+```{R}
+df.large <- df.large %>% filter(between(passenger_count, 1, 6))
+```
+
+```{R}
+df.large %>% mutate(date = date(pickup_datetime)) %>% group_by(date) %>% 
+      summarize(num.records = n()) %>%
+      ungroup() %>%
+      ggplot(aes(x = date, y = num.records)) + geom_point() + geom_line()
+
+
+```
+There seems to be one weird day, but I'm not too worried about that. The data seems to be pretty consistent over the days in the dataset.
+
+
+##### Adding halfway latitude/longitudes
+
+It might be interesting to see where the halfway points are for each ride. As a crude heuristic, I'll take the vector average of the pickup and dropoff locations. 
+```{R}
+df.large <- df.large  %>% mutate(halfway_latitude = (pickup_latitude + dropoff_latitude)/2, 
+                     halfway_longitude = (pickup_longitude + dropoff_longitude)/2)
+```
+
+##### Adding the neighborhoods
+
+I've defined a vectorized function `vec.geoCode` for calling the Google Maps Api and getting the neighborhood given a latitude or longitude. 
+
+With over 1,000,000 rows, however, I can't call the API for every row. I'll need to round the latitude/longitude coordinates and group based on these rounded coordinates, and only call the API for the aggregates 
+
+A rounded latitude/longitude pair to the 3rd decimal point covers around 110 square meters. New York City covers aroud 789 squre kilmeters. Therefore if I round to the 3rd decimal point and group by lat-long pairs, I should expect around 7,000 unique rounded paris...
+
+```{R}
+df.large %>% mutate(latitude = round(pickup_latitude, 3), longitude = round(pickup_longitude, 3)) %>%
+      group_by(latitude, longitude) %>%
+      summarize(num.occurneces = n())
+```
+
+13,000 rows. Each Row takes around .6 seconds... That would take around 2 hours (assuming Google doesn't close the connection. 
+
+If I instead round to 2 decimal places (each lat-long pair should cover aroudn 1.1 kilometers): 
+```{R}
+df.large %>% mutate(latitude = round(pickup_latitude, 2), longitude = round(pickup_longitude, 2)) %>%
+      group_by(latitude, longitude) %>%
+      summarize(num.occurneces = n())
+
+```
+
+I get only 1,000 rows. 
+
+I'll use this less precise representation. Most likey, an error of at most 1.1 kilometers will not cause an error in the neighborhood classification. Also, what's more interesting, really, are qeustions like: "are people going downtown on friday nights?" or "Do people take taxis to Brooklyn home from work?
+
+```{R}
+neighborhoods <- bind_rows(
+unique(df.large %>% mutate( latitude = round(pickup_latitude,2), longitude = round(pickup_longitude, 2)) %>%
+      select(latitude, longitude)),
+unique(df.large %>% mutate( latitude = round(dropoff_latitude,2), longitude = round(dropoff_latitude, 2)) %>%
+      select(latitude, longitude))
+)
+
+```
+```{R}
+#time execution
+startime <- Sys.time()
+
+#Add pickup neighborhood
+neighborhoods <- neighborhoods %>%
+      mutate(neighborhood = vect.geoCode(latitude, longitude))
+
+endtime <- Sys.time()
+```
+
+```{r}
+startime - endtime
+```
+
+```{R}
+neighborhoods
+```
+It worked! I'll write this to disk to be safe...
+```{R}
+write.csv(neighborhoods,"neighborhoods.csv")
+```
+
+Now I'll try and see why so many API requests failed. 
+
+```{R}
+neighborhoods %>% filter(is.na(neighborhood)) %>%
+      group_by(latitude,longitude) %>%
+      summarize( count = n()) %>%
+      ungroup() %>%
+      arrange( desc(count))
+```
+```{R}
+nrow(neighborhoods[is.na(neighborhoods$neighborhood),])
+```
+
+There are many missing neighborhoods. This might not be a problem if they are more obsure pickup/dropoff locations, and don't occur frequently in the data set.
+
+I'll revisit this after I've joined in the neighborhoods with the rest of the data, and see if I should try and fill these NA's. I'll only do so if I can't make a meaningful Chord plot without doing so. 
+
+##### Joining in the neighorhoods to the dataset
+```{R}
+df.large <- df.large %>% 
+      mutate(rounded_pickup_latitude = round(pickup_latitude, 2), 
+             rounded_pickup_longitude = round(pickup_longitude,2)) %>%
+      left_join(neighborhoods, by = c("rounded_pickup_latitude" = "latitude", "rounded_pickup_longitude" = "longitude")) %>%
+      mutate( pickup_neighborhood = neighborhood) %>%
+      select(-rounded_pickup_latitude, -rounded_pickup_longitude, -neighborhood) %>%
+      mutate(rounded_dropoff_latitude = round(dropoff_latitude, 2), 
+             rounded_dropoff_longitude = round(dropoff_longitude,2)) %>%
+      left_join(neighborhoods, by = c("rounded_dropoff_latitude" = "latitude", "rounded_dropoff_longitude" = "longitude")) %>%
+      mutate(dropoff_neighborhood = neighborhood) %>%
+      select(-rounded_dropoff_latitude, -rounded_dropoff_longitude, -neighborhood)
+
+```
+```{R}
+mean(is.na(df.large$pickup_neighborhood))
+mean(is.na(df.large$dropoff_neighborhood))
+```
+
+No problem. Only 5% of our data don't have neighborhoods. I'll take that. 
+
+One last look:
+```{R}
+head(df.large)
+```
+I'll get rid of the annoying `X.x` and `X.y` columns from joining, and then we look good. I'll write this data and use it for the dashborad.
+```{R}
+df.large <- df.large %>% select(-X.x, -X.y)
+```
+
+```{R}
+# Write cleaned data
+write.csv(df.large, "data/clean.csv")
+```

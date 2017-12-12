@@ -1,0 +1,120 @@
+---
+title: "Defensive/Special Teams Analysis"
+output: html_notebook
+---
+```{R}
+library(knitr)
+library(devtools)
+library(dplyr)
+library(ggplot2)
+library(gridExtra)
+```
+Load the defense/special team data. 
+```{R}
+
+df_dst <- read.csv("../processed_data/player_data/DST/DST.csv")
+
+```
+```{R}
+head(df_dst)
+```
+ Quick peek at scale of features
+```{R}
+df_dst %>% 
+      group_by(Team, year) %>%
+      summarise(Sum.Sacks = sum(Sacks), 
+                 Sum.QB.Hits = sum(QB.Hits),
+                 Sum.Int = sum(Int), 
+                 Sum.Fum.Rec = sum(Fum.Rec), 
+                 avg.Pts.Allowed = mean(Pts.Allowed)
+      ) %>%
+       arrange(year)
+
+```
+
+Add column for next year's average fantasy points earned and fantasy points allowed. These is going to be used as the response variable I'm trying to predict. 
+```{R}
+df_dst <- df_dst %>%
+      left_join(
+            df_dst %>%
+                  group_by(Team, year) %>%
+                  summarise(
+                        Next.Avg.Fantasy.Points = mean(Fantasy.Points),
+                        Next.Avg.Fantasy.Points.Allowed = mean(Pts.Allowed)
+                  ) %>%
+                  ungroup() %>%
+                  mutate(previous.year = year - 1),
+            by = c("year" = "previous.year", "Team" = "Team")
+      ) %>%
+      mutate(Next.Avg.Delta = Next.Avg.Fantasy.Points - Next.Avg.Fantasy.Points.Allowed)
+```
+```{R}
+g1 <- qplot(df_dst$Fantasy.Points, bins = 20)
+g2 <- qplot(df_dst$Pts.Allowed, bins = 20)
+g3 <- qplot(df_dst$Next.Avg.Delta, bins = 20)
+
+
+grid.arrange(g1,g2,g3, ncol = 2)
+```
+
+It looks like teams tend to give up more points than they earn. To win matchups, it makes sense to pick teams that maximize the difference between points earned and points lossed (Points Delta). This will be my response variable. 
+
+Aggregate data.
+```{R}
+df_dst <- df_dst %>%
+      group_by(Team, year) %>%
+      summarize(
+            Player = first(Player), 
+            Avg.Sacks = mean(Sacks), 
+            Avg.QB.Hits = mean(QB.Hits), 
+            Avg.Fantasy.Points = mean(Fantasy.Points), 
+            Avg.Fantasy.Points.Allowed = mean(Pts.Allowed),
+            Avg.Int = mean(Int), 
+            Avg.Fum.Rec = mean(Fum.Rec),
+            Next.Avg.Fantasy.Points = first(Next.Avg.Fantasy.Points), 
+            Next.Avg.Fantasy.Points.Allowed = first(Next.Avg.Fantasy.Points.Allowed), 
+            Next.Avg.Delta = first(Next.Avg.Delta)
+      ) %>% 
+      ungroup()
+            
+```
+
+```{R}
+test <- df_dst %>% filter(year < 2016)
+model <- lm(data = test, Next.Avg.Delta ~ Avg.Fantasy.Points + Avg.Fantasy.Points.Allowed  )
+
+summary(model)
+
+```
+
+Add predictions and residuals
+```{R}
+predictions <- df_dst %>% filter(year == 2016)
+predictions$Predictions = predict(model, predictions)
+```
+
+```{R}
+qplot(test$Residuals)
+plot(model)
+```
+
+```{R}
+head(predictions)
+```
+
+```{R}
+predictions <- predictions %>%
+      select(Player, Team, year, Predictions, Avg.Fantasy.Points) %>%
+      mutate(week = NA, Pos = "DST", Previous.Avg.Fantasy.Points = Avg.Fantasy.Points) %>% 
+      mutate(min = min(Predictions)) %>%
+      mutate(Predictions = Predictions - min(Predictions)) %>%
+      select(Player, Team, Pos, year, week, Previous.Avg.Fantasy.Points, Predictions) %>%
+      arrange(desc(Predictions)) %>%
+      top_n(20)
+
+      predictions
+```
+
+```{R}
+write.csv(predictions, "../predictions/week-1/DST.csv")
+```
