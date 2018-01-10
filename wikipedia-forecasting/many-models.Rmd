@@ -96,12 +96,11 @@ str(data)
 
 `Page` is a factor, and `views` is an integer datatype, which makes sense. `date` is stored as a factor, which is not right - really we want to store it as a native date format. 
 
-To do this, we'll have to remove the leading `X` characters at the begining of each value, and cast it to a native `date` datatype using the function `lubridate::date`. 
+To do this, we'll have to remove the leading `X` characters at the begining of each value. Later, I will cast these strings to  native `date` datatypes using the function `lubridate::ymd()` function - but for now I will leave it as strings - for reasons I will discuss in a minute. 
 
 ```{R}
 data <- data %>%
-      mutate(date = str_replace(pattern = "X", replacement = "", date)) %>%
-      mutate(date = ymd(date))
+      mutate(date = str_replace(pattern = "X", replacement = "", date))
 
 head(data)
 ```
@@ -135,6 +134,75 @@ So 20% of the Wikipedia page counts have at least one missing value. This is a l
 For forecasting purpose, I might have to resort to Facebook's `Prophet` package, which claims to be "robust to missing data". 
 
 
+
+## 2. Nesting `dataframes` - a `dataframe` for every page. 
+
+Now, as discussed earlier, we transform the dataset into a dataframe such that every page populats one row, and the corresponding data is stored in a list column. This is a three-liner with the `tidyr::nest()` function. 
+
+#### 2.1 Using the `tidyr::nest()` function.
+
+**A word of warning** - creating list columns with the `tidyr::nest()` function is very slow if if one of your columns is of type `Date` (see [this Github issue for more details](https://github.com/tidyverse/tidyr/issues/369)). As such, I will on
+
+```{R}
+# dataframes within dataframes... dataframeception!
+nested = data %>%
+      group_by(Page) %>%
+      nest()
+```
+
+
+Now, taking a look at our nested dataframe, we can see that there is one row per Wikipedia page, and a column called `data` which is populated with a tibble (well behaved dataframe) containing the data fro that Wikipedia page:
+
+```{R}
+# first five wikipedia pages
+head(nested)
+```
+
+```{R}
+# isolating the first page in the dataset
+first_page = nested[1,]
+
+# taking a look at the first entry fo the column `data`
+first_page$data
+```
+
+#### 2.2 Casting date types
+
+Now that we have a properly neste dataframe, we can cast the `date` column in every nested dataframe to the correct datatype. 
+
+Again, the reason I didn't do this upfront is because the `nest()` function is _very_ slow when one of the columns you are nesting is a date type. 
+
+To do this type cast, I'll write small function that casts the data type of the `date` column in a dataframe, and then map it over all the nested dataframe using `purrr::map()`:
+
+```{R}
+# quick function to cast string dates to native dates
+cast_date <- function(df){
+      df %>% mutate(date = ymd(date))     
+}
+```
+
+```{R}
+# applying this transformation to each of the nested dataframes by
+# modifying the `data` column, using `dplyr::mutate()`:
+nested = nested %>%
+      mutate(data = map(.f = cast_date, .x = data))
+```
+
+
+
+
+
+```{R}
+apply_lm <- function(df){
+      lm(data = df, views ~ date)     
+}
+```
+
+```{R}
+first_page %>%
+      mutate(linear_reg = map(.f = apply_lm, .x = data)) %>%
+      .$linear_reg
+```
 
 
 
