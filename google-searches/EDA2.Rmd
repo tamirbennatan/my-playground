@@ -1,0 +1,153 @@
+---
+title: "My 2017 search history"
+output:
+  html_document:
+    fig_height: 6
+    fig_width: 8
+    messages: no
+    toc: true
+    toc_depth: 3
+    df_print: paged
+---
+
+```{R}
+library(dplyr)
+library(ggplot2)
+library(lubridate)
+library(stringr)
+library(jsonlite)
+library(purrr)
+library(tidytext)
+library(tidyr)
+```
+
+
+```{R}
+# get names of serach files
+search.files = list.files("Searches/")
+# isolate paths to files of 2017 searches
+files_2017 = paste("Searches/",search.files[starts_with(match = "2017", ignore.case = FALSE, vars = search.files)], sep = "")
+
+files_2017
+
+```
+
+```{R}
+
+j = jsonlite::read_json(path = files_2017[1])
+
+# an example of what these records look like
+tmp = j$event[[1]]
+tmp
+```
+
+So each one of these JSON files is one document, with name `event`, which contains a list of all the querries. We can unwrap each one of these querries into a dataframe using the small function below:
+
+```{R}
+# a function that applies to each of the query documents
+unwrap_query <- function(doc){
+      # all contained under the `query` field  
+      tmp = doc$query
+      # build a list to accummulate data
+      ex = list()
+      
+      # add the query timestamp - which is itself a list - with `append` base function.
+      ex = append(x = ex, values = tmp$id[[1]])
+      # add the query text - a character
+      ex$query_text = tmp$query_text
+      ex = as.data.frame(ex)
+      return(ex)
+}
+
+```
+
+
+Now, the nice functional toolkit availaible in `purrr`, we can map this function onto all elements of the list, and collapse this list into a dataframe by staking the elements row-wise
+
+
+```{R}
+map_df(.x = j$event, .f = unwrap_query)
+```
+
+Applying this method to all the 2017 serach files: 
+
+```{R}
+# start by making a dataframe using the first 2017 documents
+tmpjson = jsonlite::read_json(path = search.files[1])
+df = map_df(.x = tmpjson$event, .f = unwrap_query)
+
+# repeat the process with the rest of the JSON files, and bind the rows to get one dataframe. 
+for (i in 2:(length(search.files))){
+      tmpjson = jsonlite::read_json(path = search.files[i])
+      tmpdf = map_df(.x = tmpjson$event, .f = unwrap_query)
+      # add new data to existing data
+      df = bind_rows(df, tmpdf)
+}
+
+
+```
+
+```{R}
+df
+```
+
+```{R}
+View(df)
+```
+
+```{R}
+df = df %>%
+      mutate(timestamp_usec = as.numeric(timestamp_usec)) %>% # convert usec time to numeric
+      mutate(time =as.POSIXct(timestamp_usec/1000000, origin = "1970-01-01" )) %>% # convert to regular timestamp
+      select(-timestamp_usec)
+```
+
+```{R}
+df
+```
+
+
+For convenience - a function that unnests the dataframe into n-grams. 
+
+```{R}
+extract_ngrams <- function(d, n = 1){
+      d %>%
+            unnest_tokens(word, query_text, token = "ngrams", n = n)
+}
+
+```
+```{R}
+# example - extracting unigrams:
+df %>%
+      extract_ngrams(1)
+```
+
+```{R}
+df = df %>%
+      mutate(week = week(time))
+
+nested_weekly = extract_ngrams(1) %>%
+      group_by(week, word) %>%
+      summarise(count = n()) %>%
+      ungroup() %>%
+      group_by(word)
+      nest()
+```
+
+```{R}
+nested_weekly
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
