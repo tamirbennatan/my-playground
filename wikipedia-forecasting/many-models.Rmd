@@ -186,9 +186,111 @@ cast_date <- function(df){
 # modifying the `data` column, using `dplyr::mutate()`:
 nested = nested %>%
       mutate(data = map(.f = cast_date, .x = data))
+
+# isolating the first page in the dataset
+first_page = nested[1,]
 ```
 
 
+## 3. Before we start modeling... what's the data look like? 
+
+The point of this notebook is to show how to use modeling for data exploration. But even so - I can't jump into modeling without knowing what the data looks like at the least.
+
+I'm most interested in identifying structure in the data that will influence my choices of parameters in models to come, or which models to use. For example, I'd be interested in identifying are any seasonal structure at a human interval - such as weekly or annual seasonality - which I've come to expect with any time series data relating to online activity. This is because if I choose to fit a Seasonal ARIMA model to each time series, or perform some sort of time series decomposition, I will need to know the periodicity of the seasonality, if any. I'd also be interested in identifying any outliers or extreme values. This may motivate me to transform my data in some way, or use models that are robust to extreme values. 
+
+#### 3.1 A first glance
+
+So far, our data consists of one row per Wikipedia page, with a column containing the data for each page:
+
+
+```{R}
+head(nested)
+```
+
+Each nested tibble (the data associated with a page) consists of the view count over the dates in the dataset:
+
+```{R}
+nested[1,] %>%
+      .$data %>%
+      .[[1]] %>%
+      head()
+```
+
+Some interesting questions are:
+
+1. What information is stored in those convoluted page names?
+2. What seasonality can we observe in the page views?
+3. How variable are the page views across the different pages?
+4. How many pages have very extreme page view counts? 
+
+
+#### 3.2 Disecting the page names
+
+Taking a closer look at a sample of 30 page names, we can see that there is a lot of information stored in those names...
+
+```{R}
+set.seed(1)
+nested %>%
+      sample_n(size = 30) %>%
+      select(Page)
+
+```
+
+Some of the things I've noticed:
+
+1. It looks like the the begining of the name is the Wikipedia page's title - spaces seperated by underscores. I see values of `Page` that start with strings like *Mouammar_Kadhafi* and *Masacre_de_la_Escuela_Secundaria_de_Columbine* (an article about the Columbine shooting in Spanish).
+2. After the article title, there is a two letter code for the language (_ja, de, fr, en_, etc), followed by a period. 
+3. The end of the page name shows the client the views were made on (e.g. _mobile, web, all-access_)
+4. The very last words of the page name (from this sample) are ither *all-agents* or *spider*. Not sure what this is. 
+
+The first thing I'd be interested in is extracting the language of the article. Studying the distribution of vies over different languages is as close as we can get to studying the viewing behavior of different geographic regions, which is an interesting venture. 
+
+Using a simple regular expression, I can extract the two letters that precede the first period in the page - in hopes that the pattern I've seen in this sample extend to the rest of the data. 
+
+```{R}
+nested = nested %>%
+      # a positive lookahead - extract two letters preceding first period. 
+      mutate(language = str_match(pattern = regex("[a-z][a-z](?=\\.)"), Page))
+
+```
+
+```{R}
+nested %>%
+      count(language, sort = TRUE) %>%
+      rename(count = n) %>%
+      mutate(cumulative.proportion = cumsum(count)/sum(count)) %>%
+      mutate(language = ifelse(cumulative.proportion < .9, language, "other")) %>%
+      group_by(language) %>%
+      summarize(count = sum(count)) %>%
+      ungroup() %>%
+      mutate(proportion = count/sum(count)) %>%
+      ggplot(aes(x = language, y = proportion, fill = proportion)) +
+      geom_col() +
+      ylab("Proportion of pages with hypothesized language")
+
+```
+
+Using this extraction method, we can see that around 90% of the pages are in the languages:
+
+1. German (de)
+2. English (en)
+3. Spanish (es)
+4. French (fr)
+5. Japanese (ja)
+6. Russian (ru)
+7. Chinese (zh)
+
+The remaining 10 percent are "other". These could indeed be articles in different languges than the 7 listed above, or it could be that my extraction regex doesn't work correctly on the entire dataset. 
+
+As such, I'll encode the languages not in the list above as *other*, and tread carefully when analyzing data of this class in the future:
+
+```{R}
+nested = nested %>%
+      mutate(language = ifelse(
+            language %in% c("de", "en", "es", "fr", "ja", "ru", "zh"),
+            language, 
+            "other"))
+```
 
 
 
@@ -201,7 +303,9 @@ apply_lm <- function(df){
 ```{R}
 first_page %>%
       mutate(linear_reg = map(.f = apply_lm, .x = data)) %>%
-      .$linear_reg
+      .$linear_reg %>%
+      .[[1]] %>%
+      summary()
 ```
 
 
