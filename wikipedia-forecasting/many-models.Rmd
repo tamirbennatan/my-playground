@@ -21,11 +21,13 @@ library(stringr)
 library(lubridate)
 library(forecast)
 library(ggforce)
+library(broom)
+library(data.table)
 ```
 
 ## 1. Introduction
 
-In the 2016 _PlotCon_ data visualization conference, Hadley Whickham - chief scientist at RStudio and the mastermind behind [my favorite R packages](https://www.tidyverse.org/) - gave [a great talk](https://www.youtube.com/watch?v=cU0-NrUxRw4) about how to use a simple idea of _list columns_ and some tools from functional programming to manage and explore many models at once in a tidy fashion. 
+At the 2016 _PlotCon_ data visualization conference, Hadley Whickham - chief scientist at RStudio and the mastermind behind [my favorite R packages](https://www.tidyverse.org/) - gave [a great talk](https://www.youtube.com/watch?v=cU0-NrUxRw4) about how to use a simple idea of _list columns_ and some tools from functional programming to manage and explore many models at once in a tidy fashion. 
 
 What I like about this talk - and the proposed technique (which I use in this notebook) - is that Whickham shows how to muse _modeling as a form of data exploration_. From my experience, statistical modeling does not usually help you discover a new dimension or property in your data. By definition, statistical models are limited to the data and features you train them on, and since their behavior is so closely tied to your initial assumptions, they rarely make you question your assumptions or teach you something about your dataset. 
 
@@ -150,6 +152,10 @@ nested = data %>%
       nest()
 ```
 
+```{R}
+# remove the unnested data to free up some memory
+rm(data)
+```
 
 Now, taking a look at our nested dataframe, we can see that there is one row per Wikipedia page, and a column called `data` which is populated with a tibble (well behaved dataframe) containing the data fro that Wikipedia page:
 
@@ -397,7 +403,7 @@ first_page %>%
       .$data %>%
       .[[1]] %>%
       plot_series_log(title = first_page$article) + 
-      facet_zoom(xy = between(date, as.Date("2016-06-01"), as.Date("2016-07-01")), horizontal = FALSE, zoom.size = .6)
+      facet_zoom(xy = dplyr::between(date, as.Date("2016-06-01"), as.Date("2016-07-01")), horizontal = FALSE, zoom.size = .6)
 ```
 
 Indeed, after taking a log scale the data becomes much more visible. Perhaps this is a step I should apply to all series - to mitigate the effect of large spikes.
@@ -434,6 +440,33 @@ nested = nested %>%
 
 Now we have the mean, median and standard deviation of the views stored in `nested`. Pretty nice, eh! 
 
+```{R}
+nested %>%
+      ggplot(aes(x = average.views, fill = language)) + 
+      geom_density(position = "stack") + 
+      scale_x_log10() +
+      xlab("Average daily views (log scale)")
+```
+
+```{R}
+nested %>%
+      ggplot(aes(x = median.views, fill = language)) + 
+      geom_density(position = "stack") + 
+      scale_x_log10() +
+      xlab("Median daily views (log scale)")
+
+```
+
+```{R}
+nested %>%
+      ggplot(aes(x = stddev.views, fill = language)) + 
+      geom_density(position = "stack") + 
+      scale_x_log10() +
+      xlab("Standard deviation of daily views (log scale)")
+
+```
+
+
 Now, arrnging the views in terms of decending average view count:
 
 ```{R}
@@ -449,7 +482,7 @@ nested %>%
       .$data %>%
       .[[1]] %>%
       plot_series(title = "Main Page") + 
-      facet_zoom(xy = between(date, as.Date("2016-02-01"), as.Date("2016-03-01")), horizontal = FALSE, zoom.size = .5)
+      facet_zoom(xy = dplyr::between(date, as.Date("2016-02-01"), as.Date("2016-03-01")), horizontal = FALSE, zoom.size = .5)
 
 ```
 
@@ -477,38 +510,214 @@ apply_lm <- function(df){
 Now, mapping this function onto each of the nested dataframes, we can get a new column, `linear_trend`, which stores linear models, fit onto each corresponding nested dataframe:
 
 ```{R}
-first_page %>%
+# fit a linear model to each page
+nested = nested %>%
       mutate(linear_trend = map(.f = apply_lm, .x = data))
+
+# isolate the first page
+first_page = nested[1,]
+```
+
+
+Now, along with a list column of the data for each page in a column, we also have a fitted linear model object stored in a seperate column for each wikipedia page:
+
+```{R}
+nested %>%
+      head() %>%
+      select(Page, data, linear_trend)
+```
+
+For example, if we wanted to see the summary of the first linear model fit:
+
+```{R}
+nested[1,] %>% .$linear_trend %>% .[[1]] %>% summary()
+```
+
+Now, it'd be interesting to store a measure of model quality for each of these linear models - namely the $R^2$ statistic. This will be helpful, as looking at each model's $R^2$ will help us highlight which Wikipedia pages exhibit clear linear trend, and which don't (this might be hard to determine otherwise - can you think of a good way to do so?)
+
+
+I'll define a function `extract_r2` - which uses the `broom` function to extract the $R^2$ of a linear model. I'll then map this function onto nested `lm` models to store the $R^2$ for each model:
+
+```{R}
+# a function for extracting only the R-squared statistics
+extract_r2 <- function(model){
+      glance(model)$r.squared
+}
+
+# map this function onto each model to store the R^2
+nested = nested %>%
+      mutate(lm.r.squared = purrr::map_dbl(.f = extract_r2, .x = linear_trend))
 
 ```
 
 
+Looking at the distribution of $R^2$ across the different Wikipedia pages:
+
 ```{R}
-apply_lm <- function(df){
-      lm(data = df, views ~ date)     
+nested %>%
+      ggplot(aes(x = lm.r.squared)) + 
+      geom_density()
+```
+
+
+Most of the time series can not be explained well by a linear model, leading to low $R^2$. 
+
+Some models have suspiciously high $R^2$ values - I suspect this is because mosto fo the data is missing, and thus a linear model can fit these sparse data more effectively. To test this hypothesis, I can plot the model with the highest $R^2$:
+
+
+```{R}
+# a funtion for plotting a time series, with a fitted linear trend line on top of it
+plot_linear_trend <- function(df, title){
+      df %>%
+            ggplot(aes(x = date, y = views, color = views)) +
+            geom_point() + 
+            geom_line() + 
+            geom_smooth(method = "lm", se = FALSE) + 
+            labs(title = title) + 
+            theme(legend.position = "")
 }
 ```
 
 ```{R}
-first_page %>%
-      mutate(linear_reg = map(.f = apply_lm, .x = data)) %>%
-      .$linear_reg %>%
-      .[[1]] %>%
-      summary()
+# plot the model with the highest R^2
+nested %>%
+      arrange(desc(lm.r.squared)) %>%
+      .[1,] %>%
+      mutate(chart = map2(.f = plot_linear_trend, .x = data, .y = article)) %>%
+      .$chart
 ```
 
 
+Indeed - the model with the highest $R^2$ has only 2 non-missing points - and clearly two points can be fitted perfectly by a line. 
+
+But if we skip the pages with the 50 highest $R^2$ values, we can really see that these models have a roughly linear trend:
 
 
+```{R}
+nested %>%
+      arrange(desc(lm.r.squared)) %>%
+      filter(dplyr::between(row_number(), 50, 55)) %>%
+      mutate(chart = purrr::map2(.f = plot_linear_trend, .x = data, .y = article)) %>%
+      .$chart
+
+```
+
+
+Now, looking at the model with the lowest $R^2$:
+
+```{R}
+nested %>%
+      arrange(lm.r.squared) %>%
+      .[1,] %>%
+       mutate(chart = purrr::map2(.f = plot_linear_trend, .x = data, .y = article)) %>%
+      .$chart
+```
+
+We can see that this model as an $R^2$ of zero, as it's only a point - the model is underspecified, and so it cannot converge to an optimal linear fit (there are infinite straight lines that go through a point that are all equally valid regression lines). 
+
+If we skip the 24 pages with the lowest $R^2$, we can see that some models have very low $R^2$ values not because the time seiries exhibit trend that is non-linear in nature, but rather because the series have few anamolous points. 
+
+These anomolies, or spikes, lead to high residual error, decreasing the $R^2$. This is an interesting approach to identify outliers in the seiries: 
 
 
 
 ```{R}
 nested %>%
-      select(Page) %>%
-      filter(str_detect(pattern = "_commons.wikimedia.org_", Page))
+      arrange(lm.r.squared) %>%
+      filter(dplyr::between(row_number(), 25, 30)) %>%
+      mutate(chart = purrr::map2(.f = plot_linear_trend, .x = data, .y = article)) %>%
+      .$chart
 
 ```
+
+Now, looking at plots of series which don't have extraordinarily high or low $R^2$, we find some series that either truly exhibit non-linear trends, resulting in low $R^2$:
+
+
+```{R}
+nested %>%
+      arrange(desc(lm.r.squared)) %>%
+      filter(dplyr::between(row_number(), 10000, 10005)) %>%
+      mutate(chart = purrr::map2(.f = plot_linear_trend, .x = data, .y = article)) %>%
+      .$chart
+
+```
+
+```{R}
+# remove the linear model column to save memory
+nested <- nested %>%
+      select(-linear_trend)
+```
+
+```{R}
+head(nested)
+
+```
+
+
+## 5. Modeling volitility and seasonality with `auto.arima`
+
+```{R}
+fit_arima <- function(df) {
+      series = ts(df$views, frequency = 7)
+      auto.arima(series, seasonal = TRUE)     
+}
+```
+
+```{R}
+
+nested %>%
+      mutate(arima_model = purrr::map(.f = fit_arima, .x = data))
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
