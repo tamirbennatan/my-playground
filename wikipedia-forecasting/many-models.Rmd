@@ -20,7 +20,7 @@ library(reshape2)
 library(stringr)
 library(lubridate)
 library(forecast)
-
+library(ggforce)
 ```
 
 ## 1. Introduction
@@ -242,6 +242,7 @@ Some of the things I've noticed:
 2. After the article title, there is a two letter code for the language (_ja, de, fr, en_, etc), followed by a period. 
 3. The end of the page name shows the client the views were made on (e.g. _mobile, web, all-access_)
 4. The very last words of the page name (from this sample) are ither *all-agents* or *spider*. Not sure what this is. 
+5. I noticed that one of the domains in this sample is of the form *www.mediawiki.org*. I wonder how many domains are in this dataset. 
 
 The first thing I'd be interested in is extracting the language of the article. Studying the distribution of vies over different languages is as close as we can get to studying the viewing behavior of different geographic regions, which is an interesting venture. 
 
@@ -264,9 +265,10 @@ nested %>%
       summarize(count = sum(count)) %>%
       ungroup() %>%
       mutate(proportion = count/sum(count)) %>%
-      ggplot(aes(x = language, y = proportion, fill = proportion)) +
+      ggplot(aes(x = language, y = proportion, fill = language)) +
       geom_col() +
-      ylab("Proportion of pages with hypothesized language")
+      ylab("Proportion of pages with hypothesized language") + 
+      theme(legend.position = "")
 
 ```
 
@@ -293,6 +295,193 @@ nested = nested %>%
 ```
 
 
+Now, extracting the domains by extracting the first character sequence that is surrounded by two periods:
+```{R}
+nested %>%
+      mutate(domain = str_match(pattern = regex("(?<=\\.)[^\\.]+(?=\\.)"), Page)) %>%
+      count(domain, sort = TRUE) %>%
+      mutate(proportion = round(n/sum(n),3)) %>%
+      mutate(cumulative.proportion = cumsum(proportion))
+
+```
+
+This shows that, according to the pattern I've defined, 94.4% of the data comes from the domains *wikipedia*, *midiawiki* or *wikimedia*. 
+
+I also noticed a page name of the form *jpg_commons.mediawiki.org*. My pattern would miss that this is a special case of a *mediawiki* domain, and instead call it a *jpg_commons* domain. 
+
+To try and catch these weird cases, I'll set the domain of the page to *mediawiki* if the character sequence "mediawiki" appears in the value of the `Page` column. Same goes for *wikipedia* and *wikimedia*
+
+```{R}
+nested = nested %>%
+      mutate(domain = case_when(
+            str_detect(pattern = "mediawiki", Page) ~ "mediawiki",
+            str_detect(pattern = "wikimedia", Page) ~ "wikimedia",
+            str_detect(pattern = "wikipedia", Page) ~ "wikipedia", 
+            TRUE ~ "other"
+            )
+      )
+```
+
+```{R}
+nested %>%
+      group_by(domain) %>%
+      summarize(proportion = n()/nrow(nested)) 
+```
+
+Indeed, all page names contain the strings *mediawiki*, *wikimedia* or *wikipedia*. 
+
+From the values of the `Page` column, I can extract the Wikipedia article name. 
+
+It truns out that the way in which the article name is encoded into the values of the `Page` column depends on the domain of the page. I first saw this in [Heads or Tail's outstanding notebook](https://www.kaggle.com/headsortails/wiki-traffic-forecast-exploration-wtf-eda) - and so all the kuddos to him/her for finding this concrete pattern. 
+
+```{R}
+# Extract the article name from the `Page` column
+nested = nested %>%
+      mutate(article = case_when(
+            domain == "wikipedia" ~ str_match(Page, pattern = regex(".+(?=_[a-z][a-z].wikipedia.org_)")), 
+            domain == "wikimedia" ~ str_match(Page, pattern = regex(".+(?=_commons.wikimedia.org)")),
+            domain == "mediawiki" ~ str_match(Page, pattern = regex(".+(?=_www.mediawiki.org_)"))
+            )
+      )
+
+# a small sample of `Page` and `article` values
+set.seed(1)
+nested %>%
+      sample_n(10) %>%
+      select(Page, article)
+```
+
+This seems to be working well. Now we can compare articles across different languages. 
+
+#### 3.3 Getting a sense for seasonality
+
+If there is clear seasonality in the data, it would be important to identify it early. Looking at the first time series in the `nested` dataframe as an example:
+
+```{R}
+# isolate the first page
+first_page = nested[1,]
+
+# a function to plot a simple time series plot: to avoid re-writing code. 
+plot_series <- function(df, title = NULL){
+      df %>%
+            ggplot(aes(x = date, y = views, color = views)) + 
+            geom_point() + 
+            geom_line() + 
+            labs(title = paste(title, "series", sep = " ")) +
+            theme(legend.position = "")
+}
+```
+```{R}
+# plot the series of the first page
+first_page %>%
+      .$data %>%
+      .[[1]] %>%
+      plot_series(title = first_page$article)
+```
+
+It's hard to see any structure in this series - mostly because there's one very high value at around May 2016. Perhaps if we use a log-scale for the y-axis, we can see some more structure
+```{R}
+# a function to plot a simple time series plot on a log scale for the y-axis 
+plot_series_log <- function(df, title = NULL){
+      df %>%
+            ggplot(aes(x = date, y = views, color = views)) + 
+            geom_point() + 
+            geom_line() + 
+            labs(title = paste(title, "series", sep = " ")) + 
+            scale_y_log10() + 
+            theme(legend.position = "")
+}
+
+
+first_page %>%
+      .$data %>%
+      .[[1]] %>%
+      plot_series_log(title = first_page$article) + 
+      facet_zoom(xy = between(date, as.Date("2016-06-01"), as.Date("2016-07-01")), horizontal = FALSE, zoom.size = .6)
+```
+
+Indeed, after taking a log scale the data becomes much more visible. Perhaps this is a step I should apply to all series - to mitigate the effect of large spikes.
+
+If any seasonality is present in this data, its not immediately present. Looking at the values of the sample autocorrelation function for this first time series:
+
+```{R}
+first_page %>%
+      .$data %>%
+      .[[1]] %>%
+      .$views %>%
+      acf()
+```
+
+Again, it doesn't look like there is strong seasonality in this series. This could be an artifact of the particular series, however. This wikipedia page doesn't get very much traffic - and so a natural seasonal variation may not appear in this data. 
+
+Perhaps looking at a more popular page will be more meaningful. To get a feel for how popular each page is, I'll store average, median, and standard deviation of the daily veiws for each page in the `nested` dataframe:
+
+To do so without unnesting the nested data in `nested`, I'll use a higher order function, `extract_metric`. This function takes in a nested dataframe `d`, and a function used to calculalate a metric `metric`, and returns the that function applied to the `views` column of the nested dataset. I can then map this function with `metric` euqual to `mean`, `median` and `function(l) sqrt(var(l)` to get the average, median and standard deviation of of the `views` in each nested dataframe. 
+
+```{R}
+# apply an arbitrary metrix on the `views` column of of the nested data
+extract_metric <- function(d, metric, ...){
+      metric(d$views, ...)
+}
+
+# map this H.O.F to get the average, median and standard deviation of views
+nested = nested %>% 
+      mutate(average.views = map_dbl(.f = extract_metric, .x = data, metric = mean, na.rm = TRUE), 
+             median.views = map_dbl(.f = extract_metric, .x = data, metric = median, na.rm = TRUE), 
+             stddev.views = map_dbl(.f = extract_metric, .x = data, metric = function(l) sqrt(var(l, na.rm = TRUE))))
+
+```
+
+Now we have the mean, median and standard deviation of the views stored in `nested`. Pretty nice, eh! 
+
+Now, arrnging the views in terms of decending average view count:
+
+```{R}
+nested %>%
+      arrange(desc(average.views))
+```
+
+That's not surprising - the Wikipeda Main page gets the highest average daily view count (21,415,015.46/day). Perhaps this page will have more apparent seasonality. 
+
+```{R}
+nested %>%
+      filter(Page == "Main_Page_en.wikipedia.org_all-access_all-agents") %>%
+      .$data %>%
+      .[[1]] %>%
+      plot_series(title = "Main Page") + 
+      facet_zoom(xy = between(date, as.Date("2016-02-01"), as.Date("2016-03-01")), horizontal = FALSE, zoom.size = .5)
+
+```
+
+Two things here are interesting. First: we can indeed see some more regular seasonality in the main page. It looks like there is a periodicity of 7 days - presumably for the days of the week. 
+
+The second interesting thing is that there is a hugh Spike in web vies for about a month starting in August 2016. What could this be? And more importanty, how can I detect similar spikes in the 145K other time series in this dataset? 
+
+What this shows me is that some of the series have clear seasonality (e.g. the Wikipedia main page), while others do not (the first page in the nested dataframe). In this followin sections, I will try and use automatic modeling methods to help identify which series have strong seasonality, and which don't. 
+
+
+## 4. Modeling linear trend
+
+
+Now for the fun stuff - mapping modeleling functions onto the nested data. As a first step, I will try and model the trend of the view count using simple linear regression. Then, looking at measures of model quality such as the $R^2$, I can see which series have roughly linear trends, and which clearly dont. 
+
+To apply a linear model to each of the nested dataframes, I'll first design a function that takes in a dataframe, and applies simple linear regression onto it: 
+
+```{R}
+# a function for fitting SLR to an inptut dataframe
+apply_lm <- function(df){
+      lm(data = df, views ~ date)      
+}
+```
+
+Now, mapping this function onto each of the nested dataframes, we can get a new column, `linear_trend`, which stores linear models, fit onto each corresponding nested dataframe:
+
+```{R}
+first_page %>%
+      mutate(linear_trend = map(.f = apply_lm, .x = data))
+
+```
+
 
 ```{R}
 apply_lm <- function(df){
@@ -314,7 +503,12 @@ first_page %>%
 
 
 
+```{R}
+nested %>%
+      select(Page) %>%
+      filter(str_detect(pattern = "_commons.wikimedia.org_", Page))
 
+```
 
 
 
