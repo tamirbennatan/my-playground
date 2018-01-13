@@ -658,14 +658,21 @@ head(nested)
 
 ```{R}
 fit_arima <- function(df) {
+      tryCatch({
       series = ts(df$views, frequency = 7)
-      auto.arima(series, seasonal = TRUE)     
+      return(auto.arima(series))
+      },
+      error = function() {
+            print("Failing")
+            return(NA)
+      },
+      finally = {}
+      )
 }
 ```
 
 ```{R}
-
-nested %>%
+nested = nested %>%
       mutate(arima_model = purrr::map(.f = fit_arima, .x = data))
 ```
 
