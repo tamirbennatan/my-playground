@@ -23,6 +23,7 @@ library(forecast)
 library(ggforce)
 library(broom)
 library(data.table)
+library(gridExtra)
 ```
 
 ## 1. Introduction
@@ -656,35 +657,148 @@ head(nested)
 
 ## 5. Modeling volitility and seasonality with `auto.arima`
 
+
+
+```{R}
+nested = nested %>%
+      mutate(proportion.missing = map_dbl(.f = function (df) mean(is.na(df$views)), .x = data))
+```
+
+
+```{R}
+nested %>%
+      ggplot(aes(x = proportion.missing)) + 
+      geom_density() + 
+      labs(title = "Proportion of series missing")
+```
+
+
+```{R}
+# seed for reproducability
+set.seed(1)
+# sample 100 series that have less that 15% missing values
+nested_sample = nested %>%
+      filter(proportion.missing <= .15) %>%
+      sample_n(100)
+```
+
+
 ```{R}
 fit_arima <- function(df) {
       tryCatch({
       series = ts(df$views, frequency = 7)
-      return(auto.arima(series))
+      auto.arima(series)
       },
-      error = function() {
-            print("Failing")
-            return(NA)
+      error = function(cond) {
+            NA
       },
       finally = {}
       )
 }
 ```
-
 ```{R}
-nested = nested %>%
+nested_sample = nested_sample %>%
       mutate(arima_model = purrr::map(.f = fit_arima, .x = data))
+```
+```{R}
+# reset `first_page` to be the first fitted sample
+first_page = nested_sample[1,]
 ```
 
 
+```{R}
+extract_arima_terms <- function(model){
+      tmp = tidy(model) %>%
+            mutate(term.type = ifelse(substring(first = 1, last = 1, term) == "s", "seasonal", "non_seasonal")) %>%
+            group_by(term.type) %>%
+            summarise(num.terms = n()) %>%
+            spread(key = term.type, value = num.terms) 
+            
+      if (!("seasonal" %in% colnames(tmp))){
+            tmp$seasonal <- 0
+      }
+      
+      tmp <- tmp %>%
+            mutate(order = seasonal + non_seasonal)
+      
+      tmp
+            
+}
+
+first_page %>%
+      .$arima_model %>%
+      .[[1]] %>%
+      extract_arima_terms()
+```
+
+```{R}
+nested_sample = nested_sample %>%
+      mutate(arima.terms = purrr::map(.f = extract_arima_terms, .x = arima_model)) %>% 
+      unnest(arima.terms)
+```
+```{R}
+# show what this looks like
+nested_sample %>%
+      head(10) %>%
+      select(article, arima_model, seasonal, non_seasonal, order)
+
+```
 
 
+```{R}
+nested_sample %>%
+      group_by(order) %>%
+      summarize(count = n()) %>%
+      mutate(order = factor(order)) %>%
+      ggplot(aes(x = order, y = count, fill = order)) + 
+      geom_col() + 
+      coord_flip() + 
+      theme(legend.position = "")
 
 
+```
+
+```{R}
+p1 <- nested_sample %>%
+      group_by(non_seasonal) %>%
+      summarize(count = n()) %>%
+      mutate(non_seasonal = factor(non_seasonal)) %>%
+      ggplot(aes(x = non_seasonal, y = count, fill = non_seasonal)) + 
+      geom_col() + 
+      coord_flip() + 
+      theme(legend.position = "")
+
+p2 <- nested_sample %>%
+      group_by(seasonal) %>%
+      summarize(count = n()) %>%
+      mutate(seasonal = factor(seasonal)) %>%
+      ggplot(aes(x = seasonal, y = count, fill = seasonal)) + 
+      geom_col() + 
+      coord_flip() + 
+      theme(legend.position = "")
 
 
+grid.arrange(p1,p2)
+```
 
 
+```{R}
+nested_sample %>%
+      arrange(order) %>%
+      .$arima_model %>%
+      .[[1]] %>%
+      forecast(100) %>%
+      plot()
+```
+
+```{R}
+nested_sample %>%
+      arrange(desc(order)) %>%
+      .$arima_model %>%
+      .[[1]] %>%
+      forecast(100) %>%
+      plot()
+```
 
 
 
