@@ -82,7 +82,6 @@ public class TilePuzzleProblem extends Problem<TilePuzzleState, TilePuzzleOperat
 
 	@Override
 	State nextState(TilePuzzleState s, TilePuzzleOperator op) {
-		// TODO Auto-generated method stub
 		return op.applyOp(s);
 	}
 

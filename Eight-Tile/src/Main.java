@@ -21,6 +21,9 @@ public class Main {
 			TilePuzzleState newstate = op.applyOp(s);
 			newstate.print();
 		}
+		
+		TilePuzzleState s2 = new TilePuzzleState(TilePuzzleProblem.makeGoal(3));
+		s2.print();
 	}
 
 }

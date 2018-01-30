@@ -705,21 +705,34 @@ nested_sample = nested_sample %>%
 first_page = nested_sample[1,]
 ```
 
+```{R}
+l = nested_sample %>% .$arima_model %>%
+      .[[1]] 
+
+l$arma
+```
 
 ```{R}
 extract_arima_terms <- function(model){
-      tmp = tidy(model) %>%
-            mutate(term.type = ifelse(substring(first = 1, last = 1, term) == "s", "seasonal", "non_seasonal")) %>%
-            group_by(term.type) %>%
-            summarise(num.terms = n()) %>%
-            spread(key = term.type, value = num.terms) 
-            
-      if (!("seasonal" %in% colnames(tmp))){
-            tmp$seasonal <- 0
-      }
+     
+      # extract the coeficients as an integer vector
+      coefs = model$arma
       
+      # Isoalte the individual parameters and strore in a small tibble
+      tmp = tibble(
+            p = coefs[1],
+            d = coefs[2],
+            q = coefs[3],
+            P = coefs[4],
+            D = coefs[5],
+            Q = coefs[6]
+      )
+      
+      # store the overall order (number of ar/ma parameters)
       tmp <- tmp %>%
-            mutate(order = seasonal + non_seasonal)
+            mutate(order = p + q + P + Q,
+            seasonal = P + Q,
+            non_seasonal = p + q)
       
       tmp
             
@@ -737,10 +750,8 @@ nested_sample = nested_sample %>%
       unnest(arima.terms)
 ```
 ```{R}
-# show what this looks like
-nested_sample %>%
-      head(10) %>%
-      select(article, arima_model, seasonal, non_seasonal, order)
+# re-store the first page
+first_page = nested_sample[1,]
 
 ```
 
@@ -781,30 +792,55 @@ p2 <- nested_sample %>%
 grid.arrange(p1,p2)
 ```
 
-
 ```{R}
+# plot the forecasts for models with 5 lowest orders
 nested_sample %>%
       arrange(order) %>%
-      .$arima_model %>%
-      .[[1]] %>%
-      forecast(100) %>%
-      plot()
+      filter(row_number() <= 5) %>%
+      mutate(plot = map(.x = arima_model, .f = function(mod) plot(forecast(mod, 100))))
+```
+
+```{R}
+# plot the forecasts for models with 5 highest orders
+nested_sample %>%
+      arrange(desc(order)) %>%
+      filter(row_number() <= 5) %>%
+      mutate(plot = map(.x = arima_model, .f = function(mod) plot(forecast(mod, 100))))
+```
+
+
+```{R}
+# plot the forecasts for models with 5 highest orders
+
+apply_difference <- function(data, d){
+      tmp = data$views
+      if (d > 0){
+            for (i in 1:d){
+                  tmp = diff(tmp)
+            }
+      }
+      tmp
+}
+```
+```{R}
+
+
+nested_sample %>%
+      arrange(desc(seasonal)) %>%
+      filter(row_number() <= 5) %>%
+      mutate(acf = map2(.x = data, .y = d, .f = function(data,d) acf(apply_difference(data,d))))
 ```
 
 ```{R}
 nested_sample %>%
-      arrange(desc(order)) %>%
-      .$arima_model %>%
-      .[[1]] %>%
-      forecast(100) %>%
-      plot()
+      arrange((seasonal)) %>%
+      filter(row_number() <= 5) %>%
+      mutate(acf = map2(.x = data, .y = d, .f = function(data,d) acf(apply_difference(data,d))))
 ```
 
 
 
-
-
-
+## 6. Forecasting with `Prophet`
 
 
 
