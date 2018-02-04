@@ -58,7 +58,7 @@ except:
 paths = glob.glob('data/*/*')
 
 # set the sizes for the x and y axes of image
-X_SIZE, Y_SIZE = 64, 64
+X_SIZE, Y_SIZE = 128, 128
 
 # create an array to store a list of all characters
 all_characters = np.ndarray(shape = (0,))
@@ -68,10 +68,10 @@ for path in paths:
     # add said character name to the target vector
     all_characters = np.append(all_characters, character)
 
-# Create a seperate list for the top 20 characters
+# Create a seperate list for the top 15 characters
 counts = np.unique(all_characters,return_counts = True)
 char_count= sorted(zip(counts[0], counts[1]), key = lambda x: x[1], reverse = True)
-top_characters = [character[0] for character in char_count[0:20]]
+top_characters = [character[0] for character in char_count[0:15]]
 
 """
 Read all the images, and resize them to 128x128 sized RGB images. 
@@ -167,7 +167,7 @@ class LeNet:
         model.add(Activation('softmax'))
 
         model.compile(loss='categorical_crossentropy',
-                      optimizer= rmsprop(lr=0.0001, decay=1e-6),
+                      optimizer= rmsprop(lr=0.00001, decay=1e-6),
                       metrics=['accuracy'])
         
         return model
@@ -196,7 +196,7 @@ print
 model = LeNet.build(width = X_SIZE, height = Y_SIZE, depth = 3)
 
 # create an Early Stopping callback
-# early_stopping = EarlyStopping(patience=10)
+early_stopping = EarlyStopping(patience=20)
 
 # create a callback to save the model that performs best ont the validation set
 if not os.path.isdir("models"):
@@ -204,11 +204,11 @@ if not os.path.isdir("models"):
 checkpointer = ModelCheckpoint(filepath="models/" + filepath + ".hdf5", verbose=1, save_best_only=True)
 
 # fit the model, and save the output
-history = model.fit_generator(img_gen.flow(X_train, encode_onehot(y_train), batch_size=16),
+history = model.fit_generator(img_gen.flow(X_train, encode_onehot(y_train), batch_size=6),
         validation_data=(X_dev, encode_onehot(y_dev)), steps_per_epoch=len(X_train),
-        epochs=100, verbose=1, callbacks = [checkpointer])
+        epochs=100, verbose=1, callbacks = [early_stopping, checkpointer])
 
 with open("models/" + filepath + "_history.pkl", "wb") as handle:
-        pkl.dump(history.history, handle)
+        pkl.dump(history.history, handle, 2)
 
 
