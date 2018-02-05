@@ -497,7 +497,7 @@ What this shows me is that some of the series have clear seasonality (e.g. the W
 ## 4. Modeling linear trend
 
 
-Now for the fun stuff - mapping models onto the nested data. As a first step, I will try and model the trend of the view count using simple linear regression. Then, looking at measures of model quality such as the $R^2$, I can see which series have roughly linear trends, and which clearly dont. 
+Now for the fun stuff - mapping models onto the nested data. As a first step, I will try and model the trend of the view count using simple linear regression. Then, looking at measures of model quality such as the $R^2$, I can see which series are well explained with a linear trend, and which have more complex changes in mean. 
 
 To apply a linear model to each of the nested dataframes, I'll first design a function that takes in a dataframe, and applies simple linear regression onto it: 
 
@@ -539,7 +539,7 @@ nested[1,] %>% .$linear_trend %>% .[[1]] %>% summary()
 ```
 
 
-Now, it'd be interesting to store a measure of model quality for each of these linear models - namely the $R^2$ statistic. This will be helpful, as looking at each model's $R^2$ will help us highlight which Wikipedia pages exhibit clear linear trend, and which don't (this might be hard to determine otherwise - can you think of a good way to do so?)
+It'd be interesting to store a measure of model quality for each of these linear models - namely the $R^2$ statistic. This will be helpful, as looking at each model's $R^2$ will help us highlight which Wikipedia pages exhibit clear linear trend, and which don't (this might be hard to determine otherwise - can you think of a good way to do so?)
 
 
 I'll define a function `extract_r2` - which uses the `broom` function to extract the $R^2$ of a linear model. I'll then map this function onto nested `lm` models to store the $R^2$ for each model:
@@ -595,7 +595,7 @@ nested %>%
 ```
 
 
-Indeed - the model with the highest $R^2$ has only 2 non-missing points - and clearly two points can be fitted perfectly by a line. 
+Indeed - the model with the highest $R^2$ has only 2 non-missing points - which can be fitted perfectly by a line. 
 
 But if we skip the pages with the 50 highest $R^2$ values, we can really see that these models have a roughly linear trend:
 
@@ -626,7 +626,7 @@ We can see that this model as an $R^2$ of zero, as it's only a point - the model
 
 If we skip the 24 pages with the lowest $R^2$, we can see that some models have very low $R^2$ values not because the time seiries exhibit trend that is non-linear in nature, but rather because the series have few anamolous points. 
 
-These anomolies, or spikes, lead to high residual error, decreasing the $R^2$. This is an interesting approach to identify outliers in the seiries: 
+These anomolies lead to high residual error, decreasing the $R^2$. This is an interesting approach to identify outliers in the series': 
 
 
 ```{R}
@@ -638,7 +638,7 @@ nested %>%
 ```
 
 
-Now, looking at plots of series which don't have extraordinarily high or low $R^2$, we find some series that either truly exhibit non-linear trends, resulting in low $R^2$:
+Now, looking at plots of series which don't have extraordinarily high or low $R^2$ (to avoid series with mostly missing values), we find some series that truly exhibit non-linear trends, resulting in low $R^2$:
 
 
 ```{R}
@@ -647,7 +647,6 @@ nested %>%
       filter(dplyr::between(row_number(), 10000, 10005)) %>%
       mutate(chart = purrr::map2(.f = plot_linear_trend, .x = data, .y = article)) %>%
       .$chart
-
 ```
 ```{R}
 # remove the linear model column to save memory
@@ -662,13 +661,25 @@ head(nested)
 
 ## 5. Modeling volitility and seasonality with `auto.arima`
 
+ARIMA models are typically used for inference and forecasting on a time series where the systematic trend and seasonalities are known. In this section, I'll be using ARIMA forecasting to help determine which series have strong seasonality, and which do not.
+
+To do so, I'll run the `forecast::auto.arima` routine on each of the nested series. This routine runs a  grid search on a set of ARIMA model hyperparameters, and returns the best fitting model. The hyperparameters that need to be chosen are:
+
+- `p`: the number of autoregressive (AR) terms to include.
+- `d`: the number of times to perform first order differencing on the series.
+- `q`: the number of moving average (MA) terms to include.
+- `P`: the number of _seasonal_ AR terms to include.
+- `Q`: the number of _seasonal_ MA terms to include.
+
+Models fit on series that exhibit high seasonality are more likely to have a large number of seasonal AR and MA terms. Therefore, one aproach to finding model with seasonal structure is to run a model optimization routine like `auto.arima` on each of the series, and look a the series with the highest number of seasonal terms. We can also find series with overall complex autocovariance structure by looking series whose fitted models have a large number of parameters. 
+
+
+Unfortunately, `auto.arima` ARIMA models suffer on data with a large number of missing values. Thus, I will limit the data to series that are mostly complete for this exercise.
 
 ```{R}
 nested = nested %>%
       mutate(proportion.missing = map_dbl(.f = function (df) mean(is.na(df$views)), .x = data))
 ```
-
-
 ```{R}
 nested %>%
       ggplot(aes(x = proportion.missing)) + 
@@ -676,6 +687,9 @@ nested %>%
       labs(title = "Proportion of series missing")
 ```
 
+Most of the series are almost complete. Thus, limiting the view to series that have less than 15% missing values will not exclude too much of the data.
+
+The `auto.arima` function is rather slow, and so it is not feasible to run on 100k+ series. Thus, I'll sample 100 series that have less than 15% missing values for the purpose of demonstrating this technique. 
 
 ```{R}
 # seed for reproducability
@@ -686,8 +700,9 @@ nested_sample = nested %>%
       sample_n(100)
 ```
 
-
 ```{R}
+# A function for fitting a seasona ARIMA model to a dataframe. 
+# Need to catch errors, as unfortunate optimization routines may lead to divergent results.
 fit_arima <- function(df) {
       tryCatch({
       series = ts(df$views, frequency = 7)
@@ -701,6 +716,7 @@ fit_arima <- function(df) {
 }
 ```
 ```{R}
+# fit ARIMA models to each nested dataframe
 nested_sample = nested_sample %>%
       mutate(arima_model = purrr::map(.f = fit_arima, .x = data))
 ```
@@ -709,12 +725,24 @@ nested_sample = nested_sample %>%
 first_page = nested_sample[1,]
 ```
 
-```{R}
-l = nested_sample %>% .$arima_model %>%
-      .[[1]] 
+Now, we have an arima model for each of the nested dataframes:
 
-l$arma
+```{R}
+nested_sample %>%
+      head() %>%
+      select(Page, arima_model)
 ```
+
+We can look at the parameters {p, d, q, P, D, Q} of each of the fitted models:
+
+```{R}
+# looking at the parameters of a simple 
+nested_sample %>% .$arima_model %>%
+      .[[1]] %>%
+      .$arma
+```
+
+Now, I'll compute columns for the number of seasonal/nonseasonal terms in each nested model, as well as the overall complexity:
 
 ```{R}
 extract_arima_terms <- function(model){
@@ -748,6 +776,9 @@ first_page %>%
       extract_arima_terms()
 ```
 
+
+Now, creating columns that store the order of each of the ARIMA parameters:
+
 ```{R}
 nested_sample = nested_sample %>%
       mutate(arima.terms = purrr::map(.f = extract_arima_terms, .x = arima_model)) %>% 
@@ -756,8 +787,10 @@ nested_sample = nested_sample %>%
 ```{R}
 # re-store the first page
 first_page = nested_sample[1,]
-
 ```
+
+
+Taking a look at the complexities of the models of the sampled series:
 
 
 ```{R}
@@ -769,9 +802,34 @@ nested_sample %>%
       geom_col() + 
       coord_flip() + 
       theme(legend.position = "")
-
-
 ```
+
+Most of the models are of fairly low order - including models with no parameters. To test my hypothesis that models with few parameters correspond to series with non-complex structure, we can plot the series with zero parameters:
+
+
+```{R}
+nested_sample %>%
+      filter(order == 0) %>%
+      mutate(g = map(.x = data, .f = function (df) plot(forecast(df$views))))
+```
+
+Indeed, most of these models have no autocovariance structure at all. 
+
+Now, looking at the series corresponding to the five most complex models (in terms of the number of AR/MA and seasonal AR/MA terms):
+
+And also the number of seasonal/nonseasonal terms in each of the fitted models:
+
+
+```{R}
+# plot the forecasts for models with 5 highest orders
+nested_sample %>%
+      arrange(desc(order)) %>%
+      filter(row_number() <= 5) %>%
+      mutate(plot = map(.x = arima_model, .f = function(mod) plot(forecast(mod, 100))))
+```
+
+It's clear that these series have more complex strucutre - including short-term and long-term seasonality. More complex models are needed to capture these behaviours. 
+
 
 ```{R}
 p1 <- nested_sample %>%
@@ -796,21 +854,8 @@ p2 <- nested_sample %>%
 grid.arrange(p1,p2)
 ```
 
-```{R}
-# plot the forecasts for models with 5 lowest orders
-nested_sample %>%
-      arrange(order) %>%
-      filter(row_number() <= 5) %>%
-      mutate(plot = map(.x = arima_model, .f = function(mod) plot(forecast(mod, 100))))
-```
 
-```{R}
-# plot the forecasts for models with 5 highest orders
-nested_sample %>%
-      arrange(desc(order)) %>%
-      filter(row_number() <= 5) %>%
-      mutate(plot = map(.x = arima_model, .f = function(mod) plot(forecast(mod, 100))))
-```
+
 
 
 ```{R}
@@ -828,7 +873,6 @@ apply_difference <- function(data, d){
 ```
 ```{R}
 
-
 nested_sample %>%
       arrange(desc(seasonal)) %>%
       filter(row_number() <= 5) %>%
@@ -837,7 +881,7 @@ nested_sample %>%
 
 ```{R}
 nested_sample %>%
-      arrange((seasonal)) %>%
+      arrange(seasonal) %>%
       filter(row_number() <= 5) %>%
       mutate(acf = map2(.x = data, .y = d, .f = function(data,d) acf(apply_difference(data,d))))
 ```
