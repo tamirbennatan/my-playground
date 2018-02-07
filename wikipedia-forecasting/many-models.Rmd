@@ -831,6 +831,8 @@ nested_sample %>%
 It's clear that these series have more complex strucutre - including short-term and long-term seasonality. More complex models are needed to capture these behaviours. 
 
 
+Now, looking at the distribution of the number of seasonal/non-seasonal terms in the fitted models:
+
 ```{R}
 p1 <- nested_sample %>%
       group_by(non_seasonal) %>%
@@ -854,13 +856,24 @@ p2 <- nested_sample %>%
 grid.arrange(p1,p2)
 ```
 
+To test if models with many seasonal AR/MA terms correspond to series with strong seasonality, we can look at the sample autocovariance function (ACF) of each of these series:
 
+```{R}
+nested_sample %>%
+      arrange(desc(seasonal)) %>%
+      filter(row_number() <= 5) %>%
+      mutate(acf = map(.x = data, .f = function(d) acf(d$views)))
+``` 
+
+
+It's hard to tell from these ACF plots if there is strong seasonality in the data, because they all exhibit strong first-order dependence. This is why the autocovariances decrease slowly with increaseing lags (in the stationary case, we would expect them to decrease geometrically). 
+
+Luckily, in our fitting of `ARIMA` models, we extracted the number of terms to apply a first order diffrence, `d`. We can use this parameter to first difference each series appropriatly, then look at the ACF of the differenced data to see if strong seasonality is visible:
 
 
 
 ```{R}
-# plot the forecasts for models with 5 highest orders
-
+# a function for applying an appropriate differencing to a nested series
 apply_difference <- function(data, d){
       tmp = data$views
       if (d > 0){
@@ -879,15 +892,16 @@ nested_sample %>%
       mutate(acf = map2(.x = data, .y = d, .f = function(data,d) acf(apply_difference(data,d))))
 ```
 
-```{R}
-nested_sample %>%
-      arrange(seasonal) %>%
-      filter(row_number() <= 5) %>%
-      mutate(acf = map2(.x = data, .y = d, .f = function(data,d) acf(apply_difference(data,d))))
-```
+We can see in the differenced series that there are clear spikes at seasonal lags of period 7 days. It looks like choosing series with many seasonal AR/MA terms is an effective approach to finding series with strong seasonality. 
 
 
+## 6. Conclusion
 
+In this notebook, I've experimented with list-columns and nested dataframes as an approach to apply modeling techniques in parallel onto many groups. Although this is a computationally expensive strategy, it is widely applicable - as in many cases one is interested in learning properties within groups, and then comparing these properties across groups. 
 
+Using nested dataframes allows one to fit many models, and keep them all in one place in a tidy manner. This way, instead of keeping track of all the fitted models you have floating in your environment, you can work on one dataframe, and feel confident that you're not forgetting to apply operations to some of your datasets or models. 
 
+I especially like to use this technique as a way of data exploration. I've shown how one can use fitted models applied to each group of a dataset to extract summary and model adequacy statistics, which can help an analyst learn about his/her data. This technique allows one to generate forecasts in parallel naturally, as well. 
+
+If you've read this far, thank you (this is a very rough notebook, I'm sure there are many typos and inconsistencies). Cheers!
 
