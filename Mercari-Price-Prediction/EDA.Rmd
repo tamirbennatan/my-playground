@@ -799,12 +799,12 @@ data %>%
       mutate(no.shipping = num.postings - shipping) %>%
       mutate(shipping = shipping/num.postings, 
              no.shipping = no.shipping/num.postings) %>%
-      mutate(lab = paste("Num postings:", num.postings, "\nPerc. shipping:", round(shipping, 4))) %>%
-      ggplot(aes(x = high_category, y = item_condition_id, fill = shipping, label = lab)) + 
+      ggplot(aes(x = high_category, y = item_condition_id, fill = shipping, label = num.postings)) + 
       geom_tile() + 
       geom_text() + 
       scale_fill_distiller(palette = "Spectral", direction = 1)+ 
-      ggtitle("Percentage of postings that provide shipping, grouped by category and condition")
+      labs(title = "Percentage of postings that provide shipping, grouped by category and condition", 
+           subtite = "Annotated with the number of postings in category/condition combination.")
 ```
 
 
@@ -1308,4 +1308,137 @@ tmp %>%
 ```
 
 We have correlation! We can see that as the (suspected) retail price goes up, so does the actual price. Further, the true price seems to be less than the retail price, which makes sense - if someone is putting the retail price in an item description, it's probably because he's off about how his item is cheaper than retail. 
+
+```{R}
+pkg_regex = regex("([0-9]+ for [0-9]+)")
+```
+
+```{R}
+tmp_package = data %>%
+      filter(str_detect(str_to_lower(item_description), pattern = pkg_regex)) %>%
+      mutate(extracted = str_extract(item_description, pkg_regex)) %>%
+      filter(!is.na(extracted)) %>%
+      select(extracted, price) %>%
+      mutate(extracted_price = as.numeric(str_extract(extracted, pattern = "(?<= )[0-9]+"))) %>%
+      mutate(pkg = as.numeric(str_extract(extracted, "[0-9]+"))) %>%
+      mutate(pkg = ifelse(pkg < 1, 1, pkg)) 
+```
+
+```{R}
+tmp_package
+```
+
+I've extracted 1,256 values that match the pattern "*[number] for [number]*." The idea here is that the person is selling units in bulk. 
+
+The problem with this pattern is that a string like "5 for 10" can be interpreted as "five dollars for 10 units" or "five units for 10 dollars". Further, it's not clear wither the posting is selling one unit at a time *with the option of selling in bulk*, in which case the expected per-unit price would be something like (dollar amount of bulk order)/(number of units in bul order), or if the person is selling the items in bulk, in which case the expected price would be just `(dollar amount of bulk order)`
+
+I can test the three interpretations - each of which produce a suspected price - and see which is most highly correlated with the true price:
+
+```{R}
+tmp_package = tmp_package %>%
+      mutate(pkg.price = extracted_price/pkg) %>%
+      mutate(max.interpration.price = ifelse(pkg.price > 0, pmax(pkg.price, 1/pkg.price), pkg.price))
+```
+
+
+
+```{R}
+tmp_package %>%
+      ggplot(aes(x = extracted_price, y = price)) +
+      geom_point() + 
+      geom_smooth()
+```
+```{R}
+tmp_package %>%
+      ggplot(aes(x = pkg.price, y = price)) +
+      geom_point() + 
+      geom_smooth()
+```
+
+```{R}
+tmp_package %>%
+      ggplot(aes(x = max.interpration.price, y = price)) +
+      geom_point() + 
+      geom_smooth()
+```
+
+
+```{R}
+select(tmp_package, extracted_price, pkg.price,max.interpration.price, price) %>%
+      cor() %>%
+      corrplot(type = "upper")
+
+```
+
+
+The extracted value which is most highly correlated with is the interpretation that says that "*[a] for [b]*" indi that the price is *b*.
+
+
+Now, considering the trigrams where the `[rm]` appears as the first token - common strings are things like "*[rm] plus tax*" and "*[rm] free shipping*"
+
+I'll try and extract these as well with a regex:
+
+```{R}
+first_tkn_rgx = regex("[0-9]+ (free|plus|includ(e|ing)) (tax|ship(ping|)|all|include(d|))")
+```
+```{R}
+tmp_first = data %>%
+      filter(str_detect(str_to_lower(item_description), pattern = first_tkn_rgx)) %>%
+      mutate(extracted = str_extract(item_description, first_tkn_rgx)) %>%
+      filter(!is.na(extracted)) %>%
+      mutate(extracted.price = as.numeric(str_extract(extracted, "[0-9]+")))  
+```
+```{R}
+tmp_first %>%
+      ggplot(aes(x = extracted.price, y = price)) + 
+      geom_point()
+
+```
+```{R}
+select(tmp_first, extracted.price, price) %>%
+      cor() %>%
+      corrplot(type="upper")
+```
+
+There's a small correlation between the extracted price and the true price. 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
