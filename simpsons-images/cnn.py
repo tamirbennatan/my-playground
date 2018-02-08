@@ -165,7 +165,7 @@ class LeNet:
         model.add(Activation('softmax'))
 
         model.compile(loss='categorical_crossentropy',
-                      optimizer= rmsprop(lr=0.0001, decay=1e-6),
+                      optimizer= rmsprop(lr=0.00001, decay=1e-6),
                       metrics=['accuracy'])
         
         return model

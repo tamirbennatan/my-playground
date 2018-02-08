@@ -4,12 +4,11 @@ output:
   html_document:
     messages: no
     toc: true
-    toc_depth: 3
+    toc_depth: 2
     df_print: paged
-    fig     
 ---
 
-```{R, echo = false}
+```{R}
 suppressMessages(suppressWarnings(library(dplyr)))
 suppressMessages(suppressWarnings(library(ggplot2)))
 suppressMessages(suppressWarnings(library(tidyr)))
@@ -18,6 +17,8 @@ suppressMessages(suppressWarnings(library(gridExtra)))
 suppressMessages(suppressWarnings(library(tidytext)))
 suppressMessages(suppressWarnings(library(reshape2)))
 suppressMessages(suppressWarnings(library(treemapify)))
+suppressMessages(suppressWarnings(library(corrplot)))
+suppressMessages(suppressWarnings(library(stringr)))
 ```
 
 
@@ -28,7 +29,7 @@ data <- read.csv("data/train.tsv", row.names = NULL, sep = "\t")
 
 ## 1. A first look and data normalization
 
-##### Datatypes
+#### 1.1 Datatypes
 
 First, a look at the types of the columns:
 
@@ -47,7 +48,7 @@ data$category_name <- as.character(data$category_name)
 ```
 
 
-##### Extreme Prices?
+#### 1.2 Extreme Prices?
 
 Before I start, I'll check if there are any clearly faulty prices.
 
@@ -64,7 +65,7 @@ data %>%
 
 The distribution of prices looks believable. The most expensive items cost around $2,000, and they are almost all designer jewlery or handbags, which is believable. 
 
-##### Missing values
+#### 1.3 Missing values
 
 How many missing values does each column have? 
 
@@ -858,33 +859,453 @@ At the same time, however, these two columns are going to be the most difficult 
 Thus, I'll do my best to explore these two columns and extract some interesting features, but I may have to swtich over to Python to learn my best classifier. Stay tuned!
 
 
+I've noticed in the sample above that one of the item descriptions is filled with the string "*No description yet*. How many descriptions are like this one? 
+
+
+```{R}
+data %>%
+      filter(item_description == "No description yet") %>%
+      nrow()
+
+```
+
+
+82,489 - around 5% of the records. To be explicit, I'll convert these values to N/A values:
+
+```{R}
+data <- data %>%
+      mutate(item_description = ifelse(item_description == "No description yet", NA, item_description)) %>%
+      mutate(has.description = !is.na(item_description))
+```
+
+
+Does it make a difference if the item has a description, for the price? 
+
+```{R}
+data %>%
+      ggplot(aes(x = has.description, y = price, fill = has.description)) + 
+      geom_boxplot() + 
+      coord_flip() + 
+      scale_y_log10()
+```
+
+Maybe, but not 100% clear. 
+
+```{R}
+data %>%
+      ggplot(aes(x = has.description, y = price, fill = has.description)) + 
+      geom_boxplot(show.legend = FALSE) + 
+      coord_flip() + 
+      scale_y_log10() + 
+      facet_grid(item_condition_id ~.)
+```
+
+
+```{R}
+data %>%
+      count(item_condition_id, has.description) %>%
+      rename(count = n) %>%
+      group_by(item_condition_id) %>%
+      mutate(total = sum(count)) %>%
+      mutate(label = ifelse(has.description, paste(round(count/total,3), "% has\ndesc.", sep = ""), NA)) %>%
+      ggplot(aes(x = item_condition_id, y = count, fill = has.description, label = label)) + 
+      geom_col(position = "dodge") +
+      geom_text(vjust = 1) +
+      labs(title = "Proportion of items that (don't) have an item description")
+```
+
+We can see that few items don't have item descriptions, and that it looks like the proportion of items that have item descriptions is consistent amongst items of different values.
+
+
+Now, I'll extract a series of basic features about the descriptions/names, such as the word/character length of each description/names
 
 
 
 
+```{R}
+data <- data %>% 
+      mutate(description.length = str_length(item_description), 
+             name.length = str_length(name)) %>%
+      replace_na(list(description.length = 0, name.length = 0))
+```
 
 
+```{R}
+p1 = data %>%
+      ggplot(aes(x = description.length)) +
+      geom_histogram(bins = 50) + 
+      labs(title = "Description length") 
+
+p2 = data %>%
+      ggplot(aes(x = name.length)) +
+      geom_histogram(bins = 40) + 
+      labs(title = "Name length")
+
+grid.arrange(p1, p2)
+```
+
+It looks like the mode description length is around 50 words, but people get a lot wordier than that. The length of the posting name also mpeaks at around 40 words, but there is no long tail. This is almost surely because Mercari caps the length of the title at around 40 words, and people try and get in as much information as possible into the title. 
+
+Are the lengths of a title and a length of a description correlated? 
+
+```{R}
+data %>%
+      sample_n(200000) %>%
+      ggplot(aes(x = description.length, y = name.length, color = high_category)) + 
+      geom_point(alpha = .01) + 
+      geom_smooth(se = FALSE) +
+      labs(title = "Description length vs Name length", 
+           subtitle = "Sample of data - do not interpret this as a linear relationship!")
+```
+```{R}
+cor(data$description.length, data$name.length)
+```
+
+It seems that there may be a weak relationship between the length of the description and the name of length of the name. 
+
+But how about the price? 
+
+```{R}
+corrplot(cor(select(data, price, description.length, name.length)))
+```
+
+Almost no correlation between the description/item length and the price. 
+
+Now, a hypothesis: postings of items with big brand names will likely show off about that brand. For example, if I'm selling you a handbag from Coach, I'm going to let you know it's a Coach bag, and maybe charge a premium for it. 
+
+So an interesting feature - how many of the items include the brand name in the title/item description? 
 
 
+```{R}
+# include logical columns which indicate if name/description contain brand name.
+data <- data %>%
+      mutate(title.contains.brand = str_detect(str_to_lower(name), str_to_lower(brand_name)), 
+             description.contains.brand = str_detect(str_to_lower(item_description), str_to_lower(brand_name)))
+```
 
 
+Does this affect price? 
+
+```{R}
+p1 <- data %>%
+      ggplot(aes(x = title.contains.brand, y = price, fill = title.contains.brand)) + 
+      geom_boxplot() + 
+      scale_y_log10() +
+      coord_flip() 
+
+p2 <- data %>%
+      count(title.contains.brand) %>%
+      rename(frequency = n) %>%
+      ggplot(aes(x = title.contains.brand, y = frequency, fill = title.contains.brand)) + 
+      geom_col()
+
+grid.arrange(p1,p2)
+```
+
+Since 42% of the orignal data does not have NA `brand_name`, the majority of this feature will be NA as well. 
+
+Of the remaining items (those that have a brand specified), it looks like those that contain the brand name in the title may have slightly higher prices in the aggregate, but in general the price spread is very similar.
+
+Splitting this up by item category:
+
+```{R, fig.height = 6}
+data %>%
+      filter(!is.na(brand_name)) %>%
+      ggplot(aes(x = title.contains.brand, y = price, fill = title.contains.brand)) + 
+      geom_boxplot() + 
+      scale_y_log10() +
+      coord_flip() +
+      facet_grid(high_category~.) + 
+      labs(title = "Prices of postings with/without brand name in title, split by item category")
+```
+
+```{R, fig.height = 6}
+data %>%
+      filter(!is.na(brand_name)) %>%
+      group_by(high_category, title.contains.brand) %>%
+      summarize(frequency = n()) %>%
+      ggplot(aes(x = title.contains.brand, y = frequency, fill = title.contains.brand)) +
+      geom_col() + 
+      facet_grid(high_category~.) + 
+      coord_flip() + 
+      labs(title = "Frequency of postings with/without brand name in title, split by category")
+```
+
+It looks like for some categories, whether or not the title contains the brand name has a larger affect on the price than others. For example, for items in the *Electronics* category, the par between the median price of items that contain the brand name in the title and those that don't is higher than for other categories (this may be subject to the small number of electronics items in that contain a brand name!). 
+
+Boxplots are good for spotting high-level differences, but I'm more interested in if there is a difference in the mechanism that determines the prices of items that contain the brand in the title and those that don't. For that purpose, I need to see the _shape_ of the data, as well as the summary statistics displayed by boxplots:
 
 
+```{R}
+data %>%
+      filter(!is.na(brand_name)) %>%
+      ggplot(aes(x = price, fill = title.contains.brand)) + 
+      geom_density(position="stack") + 
+      scale_x_log10() +
+      facet_grid(high_category~.)
+```
+
+No clear difference in the distributions of prices for items that have the brand name in the title and those that don't. Further splitting by item condition:
 
 
+```{R}
+data %>%
+      filter(!is.na(brand_name)) %>%
+      ggplot(aes(x = price, fill = title.contains.brand)) + 
+      geom_density(position="stack") + 
+      scale_x_log10() +
+      facet_grid(high_category~item_condition_id)
+```
+
+It's hard to tell because the data starts to get sparse as you partition it twice, but for the most part the shapes of the price distributions for items that have the brand name in the title and those that don't are roughly the same. 
+
+From the chart above, it looks like a few exceptions are: 
+
+- *Home* goods of condition 5
+- *Other* goods of condition 4
+- *Handmade* goods of condition 2
+
+Going through one by one, I'll see if these diffrences in distribution shape are substatial, or if they're just caused by the sparcity of the data:
 
 
+```{R}
+# a quick function for making the chart that I'm about to make a bunch of times
+tmp <- function(category, condition){
+  p1 <- data %>%
+      filter(!is.na(brand_name), 
+             high_category == category, 
+             item_condition_id == condition) %>%
+      ggplot(aes(x = price, fill = title.contains.brand)) + 
+      geom_density(position = "stack", show.legend = FALSE) +
+      xlim(0, 100) +
+      labs(title = paste(category, "goods of condition", condition),
+           subtitle = "Those with brand name nonempty.")
+
+p2 <- data %>%
+      filter(!is.na(brand_name), 
+             high_category == category, 
+             item_condition_id == condition) %>%
+      count(title.contains.brand) %>%
+      rename(frequency = n) %>%
+      ggplot(aes(x = title.contains.brand, y = frequency, fill = title.contains.brand, label = frequency)) +
+      geom_col(show.legend = FALSE) + 
+      geom_label(show.legend = FALSE)
+
+grid.arrange(p1,p2,ncol=2)   
+}
+```
+```{R}
+# *Home* goods of condition 5
+tmp("Home", 5)
+```
 
 
+There are very few *Home* goods of condition 5 with a brand name (15 total), so the distributions are not reliable. 
+
+```{R}
+# *Other* products of condition 4
+tmp("Other", 4)
+```
+
+Again, the data here is too sparse to make any claims about the difference in the distribution shapes. 
 
 
+```{R}
+tmp("Handmade", 2)
+```
+
+Again sparse data!
+
+I think it's fair to assume that the differences in the shapes of the price distributions between prices that contain the brand name in the title and those that don't was only due to the sparcity of the data after I segment it twice. I suspect this feature will not be that important. 
+
+How about if the brand name is in the item description? 
+
+```{R, fig.height = 6}
+data %>%
+      filter(!is.na(brand_name) &
+             !is.na(item_description)) %>%
+      ggplot(aes(x = description.contains.brand, y = price, fill = description.contains.brand)) + 
+      geom_boxplot() + 
+      scale_y_log10() +
+      coord_flip() +
+      facet_grid(high_category~.) + 
+      labs(title = "Prices of postings with/without brand name in item description, split by item category")
+```
+
+The spreads look almost identical. I'm not going to spend too much time trying to determine if this feature is meaningful. I suspect it is not, since whether or not the brand name was contained in the title seemed to make little difference to the price, so it seems reasonable that it would not make a difference if the brand name was in the item description. 
 
 
+Mercari wrote in the challenge description that character squences that look like prices (e.g *$20.00*) were removed and replaced by the string `[rm]`. Perhaps the presense of this string will provide some signal:
+
+```{R}
+# store if posting name or description contain [rm]
+data <- data %>%
+      mutate(description.contains.rm  = str_detect(item_description, fixed("[rm]")),
+             title.contains.rm = str_detect(name, fixed("[rm]")))
+```
+
+Taking a look at the titles that contain `[rm]`:
+
+```{R}
+set.seed(1)
+data %>%
+      filter(title.contains.rm) %>%
+      sample_n(10) %>%
+      select(name, price)
+```
+
+And the descriptions that contain `[rm]`:
+
+```{R}
+set.seed(1)
+data %>%
+      filter(description.contains.rm) %>%
+      sample_n(10) %>%
+      select(item_description, price)
+```
+
+how many postings contain `[rm]` in the title/listing? 
+
+```{R}
+mean(data$title.contains.rm)
+```
+
+```{R}
+sum(data$description.contains.rm, na.rm = TRUE)/nrow(data)
+```
+
+Fewer than 1% have `[rm]` in the title, while amost 10% have it in the description. 
+
+What types of postings include `[rm]` in the description? 
 
 
+```{R}
+data %>%
+      filter(!is.na(item_description)) %>%
+      group_by(high_category, item_condition_id) %>%
+      summarize(proportion.contain.rm = mean(description.contains.rm), 
+                frequency = n()) %>%
+      ggplot(aes(x = high_category, y = item_condition_id, label = frequency, fill = proportion.contain.rm)) + 
+      geom_tile() + 
+      geom_text() +
+      scale_fill_distiller(palette = "Spectral", direction = 1)+ 
+      labs(title = "Percentage of postings that contain `[rm]` in item description", 
+              subitite = "Only considering posts with descriptons. Annotated with number of postings.") + 
+      theme(axis.text.x = element_text(angle = 35, hjust = 1))
+      
+```
+
+In general, it looks like *Beauty* and *Handmade* goods have the highest proportion of postings that contain the `[rm]` string in the description. It also looks like newer items seem to have it more frequently than used/damaged items. Why might that be? 
+
+I can look at the words that tend to come before/after the `[rm]` string by splitting up the descriptions into n-grams, and looking at the n-grams that contain the string `[rm]`. The `unnest_tokens` function from the `tidytext` package makes this very easy:
 
 
+```{R}
+rm_3grams <- data %>%
+      filter(description.contains.rm) %>%
+      unnest_tokens(ngram, item_description, token = "ngrams", n = 3, drop = FALSE) %>%
+      separate(ngram, c("token1", "token2", "token3")) %>%
+      filter(token1 == "rm" | token2 == "rm" | token3 == "rm")
+
+```
+
+Now I have all the 3-grams containing the string `[rm]`, split into three seperate columns:
+
+```{R}
+rm_3grams %>%
+      head() %>%
+      select(item_description, token1, token2, token3)
+```
+
+Each occurence of the string `[rm]` corresponds with (at most) three 3-grams - as the `[rm]` will appear as the first token, second token or the third token. 
 
 
+We can look at the most common 3-grams where `[rm]` is in each of the three positions. First: at the end. 
 
+```{R}
+rm_3grams %>%
+      filter(token3 == "rm") %>%
+      unite(trigram, token1, token2, token3, sep = " ") %>%
+      count(trigram, sort = TRUE) %>%
+      top_n(20) %>%
+      ggplot(aes(x = trigram, y = n)) + 
+      geom_col(fill ="blue") +
+      coord_flip() + 
+       labs(title = "Most common trigrams that end with [rm] in descriptions", 
+           subtitle  = "With `[rm]` as the third token")
+```
+
+We can see that these trigrams really do seems to refer to prices - the most common trigram that ends with `[rm]` is *"retails for [rm]*.
+
+How about  when the `[rm]` is at the beginning of the trigram? 
+
+```{R}
+rm_3grams %>%
+      filter(token1 == "rm") %>%
+      unite(trigram, token1, token2, token3, sep = " ") %>%
+      count(trigram, sort = TRUE) %>%
+      top_n(20) %>%
+      ggplot(aes(x = trigram, y = n)) + 
+      geom_col(fill ="red") +
+      coord_flip() + 
+      labs(title = "Most common trigrams that end with [rm] in descriptions", 
+           subtitle  = "With `[rm]` as the first token")
+```
+
+here the most common trigrams with `[rm]` as the first token strings like "*rm free shipping*", and "*[rm] plus tax*"
+
+And in the middle? 
+
+```{R}
+rm_3grams %>%
+      filter(token2 == "rm") %>%
+      unite(trigram, token1, token2, token3, sep = " ") %>%
+      count(trigram, sort = TRUE) %>%
+      top_n(20) %>%
+      ggplot(aes(x = trigram, y = n)) + 
+      geom_col(fill ="violet") +
+      coord_flip() + 
+      labs(title = "Most common trigrams that end with [rm] in descriptions", 
+           subtitle  = "With `[rm]` as the second token")
+```
+
+Common trigrams with the `[rm]` string as the second token correspond to phrases like "*for $50 each*" or "*for $50 plus tax"*
+
+Another common sequence are the sequence "for" + "[rm]" + "[a number]" - such as "*for `[rm]` 5*". I'm not really sure what type of sentence this corresponds to
+
+
+Overall, itt looks like the folk at Mercari did a good job of removing the prices from the descriptions. 
+
+**But did they miss any? ** That would be one juicy feature.
+
+```{R}
+# define a pattern sentences that include something along the lines of "retails for ..."
+retail_rgx = regex("(retail(s|)|selling|original|price|for) (for|only|at|price|is) ((\\$|)[0-9]+)")
+```
+
+Now, looking at the strings that match our regex for the retail price:
+
+```{R}
+tmp <- data %>%
+      filter(str_detect(str_to_lower(item_description), pattern = retail_rgx)) %>%
+      mutate(extracted = str_extract(item_description, retail_rgx)) %>%
+      filter(!is.na(extracted)) %>%
+      select(extracted, price) %>%
+      mutate(extracted.price = as.numeric(str_extract(extracted, pattern = "[0-9]+"))) %>%
+      mutate(diff = extracted.price - price)
+
+tmp
+```
+
+```{R}
+tmp %>%
+      filter(extracted.price < 1000) %>%
+      ggplot(aes(x = extracted.price, y = price)) + 
+      geom_point() +
+      geom_smooth() + 
+      labs(title = "Extracted retail price (from description), and true price")
+      
+```
+
+We have correlation! We can see that as the (suspected) retail price goes up, so does the actual price. Further, the true price seems to be less than the retail price, which makes sense - if someone is putting the retail price in an item description, it's probably because he's off about how his item is cheaper than retail. 
 
