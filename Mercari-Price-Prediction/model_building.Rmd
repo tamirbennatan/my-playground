@@ -1,0 +1,17 @@
+---
+title: "Mercari Price Suggestion- Model Building Model"
+output:
+  html_document:
+    messages: no
+    toc: true
+    toc_depth: 4
+    df_print: paged
+    fig_height: 6
+    fig_width: 8
+---
+
+## 0. Introduction
+
+Here I build my first model for the Mercari Price Suggestion Challenge. 
+
+I posted [an extensive exploratory analysis](https://www.kaggle.com/timib1203/one-honking-data-exploration-mercari-prices) - where I uncovered the structure that motivate the features engineered in this notebook. If you want to learn more about the data, that notebook will be more useful than this one. Please check it out, and leave feedback!
