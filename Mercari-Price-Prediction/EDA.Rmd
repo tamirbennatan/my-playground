@@ -99,7 +99,7 @@ Before I start, I'll check if there are any clearly unreasonable prices.
 data %>%
       ggplot(aes(x = price)) + 
       geom_density() +
-      labs(tite = "Distribution of prices")
+      labs(title = "Distribution of prices")
 ```
 ```{R}
 data %>%
@@ -158,7 +158,7 @@ The categories seem to be a backslash (`/`) delimited list of categories, with t
 The first thing I can do is split up this column into three different subcategories in the category hierarchy:
 
 ```{R}
-# split the category into a hierary
+# split the category into a hierarchy
 data <- data %>%
       separate(col = category_name, 
                into = c("high_category", "mid_category", "low_category"), 
