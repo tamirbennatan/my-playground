@@ -24,6 +24,7 @@ start_time <- Sys.time()
 
 ```{R}
 # data handling and manipulations
+library(Matrix)
 suppressMessages(suppressWarnings(library(dplyr)))
 suppressMessages(suppressWarnings(library(tidyr)))
 suppressMessages(suppressWarnings(library(reshape2)))
@@ -34,8 +35,8 @@ suppressMessages(suppressWarnings(library(tidytext)))
 # visualizations
 suppressMessages(suppressWarnings(library(ggplot2)))
 
+library(xgboost)
 
-library(dummies)
 ```
 
 
@@ -48,8 +49,8 @@ train <- read.csv("data/train.tsv", row.names = NULL, sep = "\t")
 # keep track of original columns, in order to revert to loading columns
 ORIGINAL.COLUMNS = colnames(train)
 # sample to play around with 
-set.seed(1)
-tmp = sample_n(train, 100)
+# set.seed(1)
+# tmp = sample_n(train, 100)
 ```
 
 ```{R}
@@ -75,7 +76,11 @@ normalize.data <- function(data){
       mutate(name = ifelse(name == "", NA, name),
              brand_name = ifelse(brand_name == "", NA, brand_name), 
              item_description = ifelse(item_description == "", NA, item_description), 
-             category_name = ifelse(category_name == "", NA, category_name))
+             category_name = ifelse(category_name == "", NA, category_name)) %>%
+             replace_na(list(category_name = "novalue/novalue/novalue", 
+                             brand_name = "novalue"))
+      
+      
       
       # lowercase brand and item description values
       data <- data %>%
@@ -155,14 +160,10 @@ high.category.levels <- train %>%
 category.onehot <- function(data){
       # first, fill any categories that aren't one of the factors to NA
       data <- data %>%
-            mutate(high_category = ifelse(high_category %in% high.category.levels, high_category, NA))
+            mutate(high_category = ifelse(high_category %in% high.category.levels, high_category, "novalue"))
       
       # Now, encode as a factor 
       data$high_category <- factor(data$high_category, levels = high.category.levels)
-      
-
-      # finally, encode one-hot
-      data <- dummy.data.frame(data, names = c("high_category"))
       
       return(data)
 }
@@ -201,9 +202,6 @@ low.mid.categories.onehot <- function(data){
       
       # change to a factor
       data$mid.low.categories <- factor(data$mid.low.categories, levels = low.mid.category.levels)
-      
-      # convert to one-hot encoding
-      data <- dummy.data.frame(data, names = c("mid.low.categories"))
       
       return(data)
 }
@@ -250,18 +248,11 @@ brand.onehot <- function(data){
       
       # add a column for whether or not the brand is NA
       data <- data %>%
-            mutate(missing.brand = is.na(brand_name))
+            mutate(missing.brand = brand_name == "novalue")
       
       # convert to a factor 
       data$brand_name <- factor(data$brand_name, levels = brand.levels)
       
-      
-      tmpcol = data$brand_name
-      
-      # encode as onehot
-      data <- dummy.data.frame(data, names = c("brand_name"))
-      
-      data$brand_name = tmpcol
       
       return(data)
 }
@@ -283,7 +274,7 @@ train <- brand.onehot(train)
 The levels here are 1,2,3,4,5. I'll add an extra one, just in case the test set has NA condition. 
 
 ```{R}
-condition.levels = c(1,2,3,4,5,NA)
+condition.levels = c(1,2,3,4,5,-1)
 ```
 
 And a function for encding the item condition
@@ -292,13 +283,11 @@ And a function for encding the item condition
 condition.onehot <- function(data){
       # if the condition is not in one of the levels, cast it to NA
       data <- data %>%
-            mutate(item_condition_id = ifelse(item_condition_id %in% condition.levels, item_condition_id, NA))
+            mutate(item_condition_id = ifelse(item_condition_id %in% condition.levels, item_condition_id, -1))
       
       # convert to factor
       data$item_condition_id <- factor(data$item_condition_id, levels = condition.levels)
       
-      # encode onehot
-      data <- dummy.data.frame(data, c("item_condition_id"))
       
       return(data)
 }
@@ -418,10 +407,10 @@ variance.words <- binned.averages %>%
 ```{R}
 variance.words.onehot <- function(data){
       for (i in 1:length(variance.words)){
-            newcol = paste("varword", i, sep = "")
+            newcol = paste(variance.words[[i]], i, sep = "")
             data[newcol] = str_detect(data$item_description, variance.words[[i]])
             
-            data <- replace_na(data, list(newcol = FALSE))
+            data[newcol][is.na(data[newcol])] <- FALSE
       }
       return(data)
 }
@@ -439,6 +428,7 @@ Now a function to remove the unneeded columns. Note that train_id is kept.
 
 ```{R}
 filter.columns <- function(data)
+
       return(
             select(data, -name, -category_name, -mid_category, 
                         -low_category, -item_description, - brand_name)
@@ -455,38 +445,356 @@ end_time <- Sys.time()
 end_time - start_time
 ```
 
+## 2. Build XGboost model
+
+First step is to create a sparse matrix from the dataset `train`. Will remove the train_id because it's not needed. Store the response in a seperate column
+
+```{R}
+# get a sparse matrix
+sparse_matrix = sparse.model.matrix(price~.-1, data = select(train, -train_id))
+
+#store the response in a seperate vector
+response = train$price
+
+```
+
+**NOTE** at this point I can `rm(train)` - since don't need it anymore (to save memoy) TODO!
+
+now, make training and validation splits
+```{R}
+## set the seed to make your partition reproductible
+set.seed(123)
+train_ind <- sample(seq_len(length(response)), size = .8*length(response),replace = FALSE)
+
+X_train <- sparse_matrix[train_ind,]
+X_dev <- sparse_matrix[-train_ind,]
+
+y_train <- response[train_ind]
+y_dev <- response[-train_ind]
+```
+
+```{R}
+start_time = Sys.time()
 
 
 
+cv <- xgb.cv(data = sparse_matrix, label = response, nrounds = 300, nfold = 3, metrics = list("rmse"), early_stopping_rounds = 5)
+
+end_time = Sys.time()
+end_time - start_time
+```
+
+```{R}
+cv$evaluation_log %>%
+      select(iter,train_rmse_mean,test_rmse_mean) %>%
+      melt(id.vars = c("iter")) %>%
+      ggplot(aes(x = iter, y = value, color = variable)) + 
+      geom_line() 
+```
+
+```{R}
+y_pred <- predict(bst, X_dev)
+
+sqrt(mean(y_pred - y_dev)**2)
+
+cv$params
+```
+
+```{R}
+tmp = train[1:100,]
+```
+
+
+## 3. Parameter Tuning
+
+A function for performing the gridsearch
+
+```{R}
+grid.search <- function(grid, k, nrounds, print_every, early){
+      
+      set.seed(8)
+      
+      best.error <- Inf
+      best.model <- NULL
+      
+      # store the history
+      history <- grid %>%
+            mutate(rmse = NA)
+      
+      for (i in 1:nrow(grid)){
+            # extract the params
+            params <- as.list(grid[i,])
+            
+            # run the cv
+            cv.tmp <- xgb.cv(data = sparse_matrix, label= response, params = params, nrounds = nrounds, nfold = k,
+                             print_every_n =  print_every, early_stopping_rounds = early)
+            
+            # extract the best 
+            tmp.score = max(cv.tmp$evaluation_log$test_rmse_mean)
+            
+            if(tmp.score < best.error){
+                  best.error <- tmp.score
+                  best.model <- cv.tmp
+            }
+            
+            history[i,"rmse"] = tmp.score
+      }
+      
+      # return the best model found
+      return(list(model = best.model, history = history))
+            
+}
+
+```
+
+First - test difference values of depth and child weight:
 
 
 
+```{R}
+grid.1 = expand.grid(max_depth = c(3,8,12), min_child_weight = c(1,3))
+
+grid.result.1 <- grid.search(grid = grid.1, k = 3,nrounds = 800, print_every = 10, early = 5)
+```
+
+```{R}
+grid.result.1$params
+```
+
+```{R}
+grid.1
+```
+```{R}
+grid.result.1$best_ntreelimit
+```
+
+
+```{R}
+chart.log <- function(cvmodel){
+      cvmodel$model$evaluation_log %>%
+      select(iter,train_rmse_mean,test_rmse_mean) %>%
+      melt(id.vars = c("iter")) %>%
+      ggplot(aes(x = iter, y = value, color = variable)) + 
+      geom_line() 
+}
+```
+
+```{R}
+chart.log(grid.result.1)
+```
+
+Ok, so it looks like the more complex models (12 trees did better). The one that enforced some regularization performed better (min_child_weight = 3). 
+
+```{R}
+grid.2 <- expand.grid(max_depth = c(12, 18), 
+                      min_child_weight = c(1, 3, 9),
+                      gamma = c(0.0, 0.2, 0.6))
+```
+
+```{R}
+grid.results.2 <- grid.search(grid = grid.2, k = 3, nrounds = 1000, print_every = 10, early = 5)
+```
+```{R}
+grid.results.2$history
+```
+```{R}
+grid.results.2$model$params
+```
+```{R}
+
+grid.results.2$model$niter
+```
+
+
+```{R}
+chart.log(grid.results.2)
+```
+```{R}
+grid.results.2$model$params
+```
+
+Ok, So we can afford to learn more complex models, but we really gotta up the regularization. Also, reduce learning rate. 
+
+```{R}
+grid.3 <- expand.grid(eta = c(.1), max_depth = c(18, 28), gamma = c(.4, .8, 2.0))
+
+grid.3
+```
+
+```{R}
+grid.results.3 <- grid.search(grid = grid.3, k = 3, nrounds = 1200, print_every = 50, early = 7)
+```
+```{R}
+chart.log(grid.results.3)
+```
+
+```{R}
+grid.results.3$history
+```
+
+```{R}
+grid.results.3$model$params
+
+```
+
+Ok. That's too deep. And *min_child_weight* is important.
+
+```{R}
+grid.4 <- expand.grid(max_depth = c(18, 22, 28), 
+                      min_child_weight = c(3, 9, 15),
+                      gamma = c( 0.6, 1.2, 3.0, 9.0), 
+                      eta = c(.1, .3))
+```
+
+```{R}
+grid.results.4 <- grid.search(grid = grid.4, k = 3, nrounds = 12000, print_every = 10, early = 5)
+```
+
+```{R}
+grid.results.4$model$params
+```
+
+```{R}
+grid.results.4$history
+```
+
+```{R}
+chart.log(grid.results.4)
+```
+
+
+One final grid - a big one
+
+```{R}
+grid.5 <- expand.grid(eta = c(.05, .1, .3), 
+                      max_depth = c(14, 18, 22), 
+                      min_child_weight = c(6, 9, 15, 20), 
+                      gamma = c(0.3, 0.6,1.2,2.4))
+```
+
+```{R}
+grid.results.5 <- grid.search(grid = grid.5, k = 3, nrounds = 1000, print_every = 50, early = 5)
+```
+
+That was too big. Just looking at one:
+
+```{R}
+cv <- xgb.cv(data = sparse_matrix, label= response, params = list( eta = .05,
+                                                                   max_depth = 22, 
+                                                                   min_child_weight = 15, 
+                                                                   gamma = .3), 
+                              nrounds = 1000, nfold = 3,
+                             print_every_n =  10, early_stopping_rounds = 5)
+```
+```{R}
+cv$niter
+```
+
+```{R}
+cv$params
+```
+
+
+```{R}
+cv$evaluation_log %>%
+      select(iter, train_rmse_mean, test_rmse_mean) %>%
+      melt(id.vars = c("iter")) %>%
+      ggplot(aes(x = iter, y = value, color = variable)) + 
+      geom_line()
+
+```
+
+## 4. Create predictions
+
+Assuming that we have tuned parameters and a trained model - now need to apply to test set:
 
 
 
+```{R}
+
+test <- read.csv("data/test.tsv", row.names = NULL, sep = "\t")
+
+```
+```{R}
+# normalize types
+test <- normalize.data(test)
+```
+```{R}
+# split categories
+test <- split.category(test)
+```
+```{R}
+# encode the brands
+test <- brand.onehot(test)
+```
+```{R}
+# encode the condition
+test <- condition.onehot(test)
+
+```
+```{R}
+test <- shipping.binary.var(test)
+```
+```{R}
+test <- basic.text.features(test) 
+```
+```{R}
+test <- basic.text.features(test) 
+```
+```{R}
+test <- variance.words.onehot(test)
+```
+```{R}
+test <- filter.columns(test)
+```
+
+```{R}
+sparse_test <- sparse.model.matrix(test_id~.-1,test)
+```
+
+# eta = 0.05        max_depth = 22               min_child_weight = 15   gamma = 0.3 n-rounds = 590
+
+```{R}
+dim(test)
+
+```
+
+**SUBJECT TO CHANGE - ISOLATE BEST MODEL**
+```{R}
+set.seed(8)
+best.model = xgboost(data = sparse_matrix,label = response, max_depth = 18, min_child_weight = 9, gamma = .6, nrounds = 36, print_every_n = 10)
+```
+
+```{R}
+predict(best.model,sparse_test)
+```
+
+```{R}
+importanceRaw <- xgb.importance(feature_names = sparse_matrix@Dimnames[[2]], model = best.model, data = sparse_matrix, label = response)
+
+xgb.plot.importance(importance_matrix = importanceRaw)
+
+```
+
+```{R}
+variance.words[8]
+```
 
 
 
+```{R}
+sub <- read.csv("~/Downloads/submission.csv")
+```
+
+```{R}
+sub %>% filter(price >1000) %>% 
+      inner_join(test)
+
+median(train$price)
+```
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+v2
 
 
 
