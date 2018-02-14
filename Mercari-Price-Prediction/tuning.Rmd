@@ -1,25 +1,22 @@
-################
-# Script for Mercari Price Prediction Challenge Submission
-# Author: Tamir Bennatan
-################
 
-# packages
-library(Matrix)
-library(dplyr)
-library(tidyr)
-library(reshape2)
-library(stringr)
-library(tidytext)
-library(xgboost)
-
-#setwd("~/Desktop/my-playground/Mercari-Price-Prediction/")
-
-# Load training data
-print("Loading training data...")
-train <- read.csv("data/train.tsv", row.names = NULL, sep = "\t")
+```{R}
+# # packages
+# library(Matrix)
+# library(dplyr)
+# library(tidyr)
+# library(reshape2)
+# library(stringr)
+# library(tidytext)
+# library(xgboost)
+# 
+# #setwd("~/Desktop/my-playground/Mercari-Price-Prediction/")
+# 
+# # Load training data
+# print("Loading training data...")
+# train <- read.csv("data/train.tsv", row.names = NULL, sep = "\t")
 # ORIGNIAL.TRAIN = train
 
-train = ORIGINAL.TRAIN
+# train = ORIGINAL.TRAIN
 
 # function to apply preliminary cleaning tranformations
 normalize.data <- function(data){
@@ -276,73 +273,67 @@ train <- filter.columns(train)
 print("Encoding training data s sparse matrix...")
 sparse_matrix = sparse.model.matrix(price~.-1, data = select(train, -train_id))
 
-#store the response in a seperate vector
-response = train$price
+
+#store the log-response in a seperate vector
+response = log(train$price)
 median.price = median(train$price)
-# isolate columns for testing
-testcols = select(train, -train_id, -price) %>% colnames() %>% c("test_id", .)
+```
 
-# rm(train)
+```{R}
+grid.search <- function(grid, k, nrounds, print_every, early){
+      
+      set.seed(8)
+      
+      best.error <- Inf
+      best.model <- NULL
+      
+      # store the history
+      history <- grid %>%
+            mutate(rmse = NA)
+      
+      for (i in 1:nrow(grid)){
+            # extract the params
+            params <- as.list(grid[i,])
+            
+            # run the cv
+            cv.tmp <- xgb.cv(data = sparse_matrix, label= response, params = params, nrounds = nrounds, nfold = k,
+                             print_every_n =  print_every, early_stopping_rounds = early)
+            
+            # extract the best 
+            tmp.score = max(cv.tmp$evaluation_log$test_rmse_mean)
+            
+            if(tmp.score < best.error){
+                  best.error <- tmp.score
+                  best.model <- cv.tmp
+            }
+            
+            history[i,"rmse"] = tmp.score
+      }
+      
+      # return the best model found
+      return(list(model = best.model, history = history))
+            
+}
 
-print("Training...")
-# best.model = xgboost(data = sparse_matrix,label = response, 
-#                      max_depth = 22,
-#                      min_child_weight = 15,
-#                      eta = .05,
-#                      gamma = .3,
-#                      nrounds = 150, print_every_n = 10)
+```
+```{R}
+grid.1 <- expand.grid(max_depth = c(18, 24), 
+                      min_child_weight = c(3, 9, 15),
+                      gamma = c( 0.3, 0.9, 2.7))
+```
 
-best.model = xgboost(data = sparse_matrix,label = response, 
-                     max_depth = 12,
-                     min_child_weight = 6,
-                     gamma = .3,
-                     nrounds = 30, 
-                     print_every_n = 2)
+```{R}
+grid.results.1  <- grid.search(grid = grid.1, k = 3, nrounds = 1000, print_every = 10, early = 5)
+```
 
-
-print("------0-------")
-
-print("Loading test data...")
-test <- read.csv("data/test.tsv", row.names = NULL, sep = "\t")
-
-ORIGINAL.TEST <- test
-
-# normalize types
-print("Normalizing types...")
-test <- normalize.data(test)
-# split categories
-print("Splitting categories...")
-test <- split.category(test)
-# encode the brands
-print("Encoding categories...")
-test <- category.onehot(test)
-test <- low.mid.categories.onehot(test)
-print("Encoding brands...")
-test <- brand.onehot(test)
-# encode the condition
-print("Encoding condition and shipping...")
-test <- condition.onehot(test)
-test <- shipping.binary.var(test)
-print("Extracting basic text features...")
-test <- basic.text.features(test) 
-print("Extracting high variance words...")
-test <- variance.words.onehot(test)
-
-test <- select(test, testcols)
-
-print("Converting test to sparse matrix...")
-sparse_test <- sparse.model.matrix(test_id~.-1,test)
-
-print("Predictions")
-pred <- predict(best.model,sparse_test)
-
-print("Writing results...")
-output = select(test, test_id)
-output$price <- pred
-
-output <- output %>%
-      mutate(price = ifelse(price < 0, median.price , price))
+```{R}
+grid.results.1$model$params
+```
 
 
-# write results
-write.csv(output, "submission.csv", row.names = FALSE)
+
+```{R}
+grid.results.1$model$niter
+```
+
+

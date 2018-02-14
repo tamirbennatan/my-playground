@@ -1,8 +1,7 @@
-################
-# Script for Mercari Price Prediction Challenge Submission
-# Author: Tamir Bennatan
-################
 
+# Ridge Regression
+
+```{R}
 # packages
 library(Matrix)
 library(dplyr)
@@ -11,6 +10,7 @@ library(reshape2)
 library(stringr)
 library(tidytext)
 library(xgboost)
+
 
 #setwd("~/Desktop/my-playground/Mercari-Price-Prediction/")
 
@@ -270,79 +270,74 @@ filter.columns <- function(data)
 
 
 train <- filter.columns(train)
+```
 
+```{R}
+train <- filter(train, price >0)
+```
 
-# get a sparse matrix
-print("Encoding training data s sparse matrix...")
+```{R}
+response = log(train$price)
+```
+
+```{R}
 sparse_matrix = sparse.model.matrix(price~.-1, data = select(train, -train_id))
+```
 
-#store the response in a seperate vector
-response = train$price
-median.price = median(train$price)
-# isolate columns for testing
-testcols = select(train, -train_id, -price) %>% colnames() %>% c("test_id", .)
+```{R}
+library(glmnet)
+```
+```{R}
+lambdas <- 10^seq(6, -2, by = -.5)
 
-# rm(train)
+cv_fit <- cv.glmnet(sparse_matrix, response, alpha = 0, lambda = lambdas)
+```
 
-print("Training...")
-# best.model = xgboost(data = sparse_matrix,label = response, 
-#                      max_depth = 22,
-#                      min_child_weight = 15,
-#                      eta = .05,
-#                      gamma = .3,
-#                      nrounds = 150, print_every_n = 10)
+```{R}
+opt_lambda <- cv_fit$lambda.min
+opt_lambda
+```
 
-best.model = xgboost(data = sparse_matrix,label = response, 
-                     max_depth = 12,
-                     min_child_weight = 6,
-                     gamma = .3,
-                     nrounds = 30, 
-                     print_every_n = 2)
+```{R}
+plot(cv_fit)
+```
 
+```{R}
+lambdas <- 10^seq(1, -5, by = -.5)
+```
 
-print("------0-------")
-
-print("Loading test data...")
-test <- read.csv("data/test.tsv", row.names = NULL, sep = "\t")
-
-ORIGINAL.TEST <- test
-
-# normalize types
-print("Normalizing types...")
-test <- normalize.data(test)
-# split categories
-print("Splitting categories...")
-test <- split.category(test)
-# encode the brands
-print("Encoding categories...")
-test <- category.onehot(test)
-test <- low.mid.categories.onehot(test)
-print("Encoding brands...")
-test <- brand.onehot(test)
-# encode the condition
-print("Encoding condition and shipping...")
-test <- condition.onehot(test)
-test <- shipping.binary.var(test)
-print("Extracting basic text features...")
-test <- basic.text.features(test) 
-print("Extracting high variance words...")
-test <- variance.words.onehot(test)
-
-test <- select(test, testcols)
-
-print("Converting test to sparse matrix...")
-sparse_test <- sparse.model.matrix(test_id~.-1,test)
-
-print("Predictions")
-pred <- predict(best.model,sparse_test)
-
-print("Writing results...")
-output = select(test, test_id)
-output$price <- pred
-
-output <- output %>%
-      mutate(price = ifelse(price < 0, median.price , price))
+```{R}
+lambdas
+```
 
 
-# write results
-write.csv(output, "submission.csv", row.names = FALSE)
+Now with interactions
+
+```{R}
+cv_fit2 <- cv.glmnet(sparse_matrix, response, alpha = 0, lambda = lambdas2)
+```
+
+```{R}
+cv_fit2$lambda.min
+```
+
+```{R}
+plot(cv_fit2)
+
+```
+```{R}
+lambdas3 = 10^seq(-4, -10, by = -.5)
+cv_fit3 <- cv.glmnet(sparse_matrix, response, alpha = 0, lambda = lambdas3)
+```
+
+```{R}
+cv_fit3$glmnet.fit
+```
+
+
+
+
+
+
+
+

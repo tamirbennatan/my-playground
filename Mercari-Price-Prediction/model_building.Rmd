@@ -70,27 +70,26 @@ normalize.data <- function(data){
       data$brand_name <- as.character(data$brand_name)
       data$item_description <- as.character(data$item_description)
       data$category_name <- as.character(data$category_name) 
-      
       # convert the empty string to naive NA values
       data <- data %>% 
-      mutate(name = ifelse(name == "", NA, name),
-             brand_name = ifelse(brand_name == "", NA, brand_name), 
-             item_description = ifelse(item_description == "", NA, item_description), 
-             category_name = ifelse(category_name == "", NA, category_name)) %>%
-             replace_na(list(category_name = "novalue/novalue/novalue", 
-                             brand_name = "novalue"))
-      
-      
+            mutate(name = ifelse(name == "", NA, name),
+                   brand_name = ifelse(brand_name == "", NA, brand_name), 
+                   item_description = ifelse(item_description == "", NA, item_description), 
+                   category_name = ifelse(category_name == "", NA, category_name)) %>%
+            replace_na(list(category_name = "novalue/novalue/novalue", 
+                            brand_name = "novalue")) %>%
+            mutate(name = str_replace_all(name, fixed(" "), "_"),
+                   brand_name = str_replace_all(brand_name, fixed(" "), "_"), 
+                   category_name = str_replace_all(category_name, "[^a-zA-Z0-9/]", "_")) %>%
+            mutate(brand_name = str_replace_all(brand_name, "[^a-zA-Z0-9]", "_"))
       
       # lowercase brand and item description values
       data <- data %>%
             mutate(brand_name = str_to_lower(brand_name), 
                    item_description = str_to_lower(item_description))
-      
       # fill item descriptions of `no item description` to NA
       data <- data %>%
             mutate(item_description = ifelse(item_description == "no description yet", NA, item_description))
-      
       return (data)
 }
 ```
@@ -274,7 +273,7 @@ train <- brand.onehot(train)
 The levels here are 1,2,3,4,5. I'll add an extra one, just in case the test set has NA condition. 
 
 ```{R}
-condition.levels = c(1,2,3,4,5,-1)
+condition.levels = c(1,2,3,4,5,6)
 ```
 
 And a function for encding the item condition
@@ -312,7 +311,7 @@ shipping.binary.var <- function(data){
             replace_na(list(shipping = 0))
       
       # convert to a factor
-      data$shipping <- as.factor(data$shipping)
+      data$shipping <- factor(data$shipping)
       
       return(data)
 }
@@ -407,7 +406,7 @@ variance.words <- binned.averages %>%
 ```{R}
 variance.words.onehot <- function(data){
       for (i in 1:length(variance.words)){
-            newcol = paste(variance.words[[i]], i, sep = "")
+            newcol = paste(variance.words[[i]], sep = "")
             data[newcol] = str_detect(data$item_description, variance.words[[i]])
             
             data[newcol][is.na(data[newcol])] <- FALSE
@@ -431,7 +430,7 @@ filter.columns <- function(data)
 
       return(
             select(data, -name, -category_name, -mid_category, 
-                        -low_category, -item_description, - brand_name)
+                        -low_category, -item_description)
       )
 ```
 
@@ -752,7 +751,6 @@ test <- filter.columns(test)
 sparse_test <- sparse.model.matrix(test_id~.-1,test)
 ```
 
-# eta = 0.05        max_depth = 22               min_child_weight = 15   gamma = 0.3 n-rounds = 590
 
 ```{R}
 dim(test)
@@ -774,6 +772,13 @@ importanceRaw <- xgb.importance(feature_names = sparse_matrix@Dimnames[[2]], mod
 
 xgb.plot.importance(importance_matrix = importanceRaw)
 
+importanceRaw
+
+importanceRaw%>%
+      ggplot(aes(x = Feature, y = Importance)) +
+      geom_col() + 
+      coord_flip()
+
 ```
 
 ```{R}
@@ -793,12 +798,37 @@ sub %>% filter(price >1000) %>%
 median(train$price)
 ```
 
+```{R}
+tmp1= sample_n(train, 100)
+tmp2 = sample_n(test, 100)
+```
 
-v2
+```{R}
+tmp1 = variance.words.onehot(tmp1)
+tmp2 = variance.words.onehot(tmp2)
+```
+
+```{R}
+colnames(tmp1)[77:110]
+```
+
+```{R}
+colnames(tmp2)[76:110]
+```
+```{R}
+tmp$a <- factor(tmp$a, levels = c(2, 199), ordered = TRUE)
+```
+
+```{R}
+tmp$a
+```
 
 
+## 5. Ridge Regression
 
+```{R}
 
+```
 
 
 
